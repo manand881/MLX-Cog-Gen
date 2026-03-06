@@ -59,7 +59,6 @@
 
 - `sample_dem.tif` lives in `tests/` — gitignored via `*.tif` but explicitly unignored via `!tests/sample_dem.tif`
 - `build/` is gitignored — must be recreated on fresh clone
-- The 2-pass approach (NEAREST to allocate structure, then MLX to overwrite) adds overhead — real gains will be larger on bigger rasters where overview computation dominates I/O time
 
 ### Results (sample_dem.tif, M1 Pro, 5 runs, both using AVERAGE resampling)
 
@@ -67,3 +66,32 @@
 |---|---|---|---|
 | `gdal_translate -r average` | 1.753s | 1.817s | 1.771s |
 | `mlx_translate` | 1.465s | 1.490s | 1.480s |
+
+### Benchmark methodology notes
+
+- `mlx_translate` copies the source into `/vsimem/` (RAM filesystem) — all reads hit RAM throughout
+- `gdal_translate` reads from disk, but macOS's OS page cache keeps the file in RAM after the first read — runs 2–5 are already reading from RAM (consistent times of ~1.793–1.811s confirm no disk variance)
+- Setting `GDAL_CACHEMAX=100` (to match the ~97.7MB uncompressed raster) made no meaningful difference (~1.771s → ~1.808s), confirming the OS page cache was already serving from RAM
+- The ~1.18x gap **persists even when both tools are effectively reading from RAM**, so it is not purely an I/O artefact — but `/vsimem/` vs OS page cache still have different overhead (no VFS layer vs VFS layer), so the split between I/O and compute is still not fully isolated
+- The two-pass approach (NEAREST + MLX) means the source and overview bands are each touched twice by `mlx_translate` vs once by `gdal_translate` — the GPU is overcoming this overhead and still winning, which is a more meaningful signal than first understood
+- **To fully isolate GPU vs CPU compute**: benchmark only `MLXBuildOverviews()` vs `GDALRegenerateOverviewsEx()` with the data already in memory for both
+
+### New methodology — multi-GSD synthetic DEMs
+
+- Replaced the single fixed test file with dynamically generated DEMs at multiple GSDs (80cm, 40cm, 20cm) so benchmarks capture how speedup scales with raster size
+- DEMs are generated from 5k random points via TIN interpolation (`gdal_grid -a linear`) — synthetic but realistic Float32 single-band rasters with NoData outside the convex hull
+- **Key finding: speedup grows with raster size** — 1.25× at 80cm (~3.7k×3.6k), 1.42× at 40cm (~7.5k×7.3k), 1.57× at 20cm (~15k×14.5k). The GPU becomes increasingly efficient relative to CPU as the workload scales
+- A single-raster benchmark at one scale is misleading — the 1.18× result from the old `sample_dem.tif` was real but not representative of larger inputs where the advantage is more pronounced
+
+### gdal_grid notes
+
+- `gdal_grid -a linear:radius=-1` performs TIN interpolation; `radius=-1` restricts output to the convex hull of the input points (pixels outside get nodata)
+- `-txe` and `-tye` (explicit extent) are **required** when `-tr` (resolution) is used — gdal_grid errors without them
+- GSD can be expressed in degrees when working in WGS84 — no need to reproject to a metric CRS just for raster generation; convert from metres using `1° lat ≈ 111,320 m`
+- Generation time scales roughly with output pixel count: 5k points over a ~3km×3km area at 20cm GSD (~15k×15k pixels) takes ~11 minutes on M1 Pro
+- OGR VRT is the correct way to make a CSV readable as a spatial layer by GDAL tools — specify `GeometryType`, `LayerSRS`, and `GeometryField` with `encoding="PointFromColumns"`
+
+### Bash compatibility
+
+- macOS ships with bash 3.2 — `mapfile` is not available; use `while IFS= read -r f; do arr+=("$f"); done < <(...)` instead
+- Separate stdout and stderr in bench functions (`>&2` for progress, plain `echo` for the return value) to cleanly capture averages via command substitution

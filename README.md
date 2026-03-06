@@ -1,54 +1,34 @@
-# mlx-cog-gen
+# MLX-Cog-Gen
 
-MLX-powered Cloud Optimized GeoTIFF generator for Apple Silicon.
+MLX-accelerated Cloud Optimized GeoTIFF generator for Apple Silicon.
 
 ## About
 
-This project takes GDAL's COG generation pipeline and replaces the pyramid/overview generation step with an MLX-accelerated implementation, making use of Apple Silicon hardware rather than letting it idle when you already have it on your machine.
+mlx-cog-gen replaces GDAL's CPU-based pyramid/overview generation with an MLX implementation that runs on the Apple Silicon GPU. Everything else in the COG pipeline (tiling, compression, metadata) is handled by GDAL as usual.
 
 **GDAL is a required system dependency.** This project links against the installed GDAL library and does not bundle it.
 
-### Why AVERAGE resampling
+## Why AVERAGE resampling
 
-GDAL's default overview resampling is **NEAREST** — it picks one pixel from each 2×2 block and discards the rest. For continuous data like elevation, imagery, or temperature, this means 75% of the signal is thrown away at each level. A ridge that's one pixel wide at full resolution can vanish entirely at the next overview level depending on which pixel happened to get selected.
+GDAL's default overview resampling is **NEAREST** — it picks one pixel from each 2×2 block and discards the rest. For continuous data (elevation, imagery, temperature), this throws away 75% of the signal at each level. A ridge that is one pixel wide at full resolution can disappear entirely at the next overview level depending on which pixel was selected.
 
-`mlx_translate` uses **AVERAGE** instead: every pixel in each 2×2 block contributes to the output. For a 2× downsample:
+`mlx_translate` uses **AVERAGE** instead: every pixel in a 2×2 block contributes to the output.
 
 ```
 out[i,j] = (src[2i,2j] + src[2i,2j+1] + src[2i+1,2j] + src[2i+1,2j+1]) / count_valid
 ```
 
-This preserves the signal energy across zoom levels and is the physically correct choice for any continuous raster.
+This preserves signal energy across zoom levels and is the physically correct choice for any continuous raster.
 
-## Future Scope
+## Build
 
-- Support additional resampling algorithms (bilinear, cubic, lanczos) on GPU — these involve larger kernels but map naturally to MLX array ops
-
-## Usage
+Install dependencies:
 
 ```bash
-build/mlx_translate input.tif output_cog.tif
+brew install gdal cmake mlx
 ```
 
-Outputs a COG with LZW compression by default. Pass `-co KEY=VALUE` to override creation options:
-
-```bash
-build/mlx_translate input.tif output_cog.tif -co COMPRESS=DEFLATE
-```
-
-## Installation
-
-No pre-built binaries yet — build from source (see below).
-
-## Development
-
-```bash
-brew install gdal  # Required system dependency
-brew install mlx   # Apple Silicon ML framework for overview acceleration
-brew install cmake # Build system
-```
-
-## Building & Testing
+Build and test:
 
 ```bash
 mkdir build && cd build
@@ -63,16 +43,33 @@ Three test suites run via `ctest`:
 - `test_overview_dims` — verifies overview dimensions match GDAL's `ceil(N/2)` convention across even/odd/multi-level inputs
 - `test_cog_stats` — runs both GDAL and MLX COG generation on a real DEM and checks that raster stats are within 5% at every overview level
 
+## Usage
+
+```bash
+build/mlx_translate input.tif output_cog.tif
+```
+
+Outputs a COG with LZW compression by default. Pass `-co KEY=VALUE` to override creation options:
+
+```bash
+build/mlx_translate input.tif output_cog.tif -co COMPRESS=DEFLATE
+```
+
 ## Benchmarks
 
-Tested on `sample_dem.tif` (4772×5125, 1-band Float32 DEM) on an M1 Pro (16 GB), 5 runs, both using AVERAGE resampling:
+Tested on an M1 Pro (16 GB), 5 runs, both using AVERAGE resampling. Rasters are Float32 single-band DEMs generated via TIN interpolation at three GSDs:
 
-| tool | avg |
-|---|---|
-| `gdal_translate -r average` | 1.771s |
-| `mlx_translate` | 1.480s |
+| Raster | Dimensions | GDAL avg | MLX avg | Speedup |
+|---|---|---|---|---|
+| dem_80cm | 3746×3634 | 1.274s | 1.012s | 1.25× faster |
+| dem_40cm | 7491×7268 | 3.936s | 2.771s | 1.42× faster |
+| dem_20cm | 14982×14536 | 13.386s | 8.480s | 1.57× faster |
 
-**1.19x faster.** Run 1 is slower due to Metal shader compilation — subsequent runs are consistent.
+Speedup grows with raster size — the GPU becomes increasingly efficient as the workload scales.
+
+## Roadmap
+
+- Support additional resampling algorithms (bilinear, cubic, lanczos) — larger kernels that map naturally to MLX array ops
 
 ## Contributing
 

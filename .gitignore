@@ -50,6 +50,8 @@ htmlcov/
 *.tiff
 *.geotiff
 *.aux.xml
+*.gpkg
+*.vrt
 
 # Test data exceptions
 !tests/sample_dem.tif
