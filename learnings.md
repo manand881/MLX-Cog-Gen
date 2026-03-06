@@ -39,6 +39,15 @@
 - MLX ops are lazy — nothing executes until `mx::eval()` is called
 - Edge replication for odd dimensions: replicate last row/col before reshape+mean — matches GDAL's `ceil(N/2)` convention
 
+## Resampling
+
+- **GDAL's default for COG overview generation is NEAREST** — listed first in `-r nearest,bilinear,...` and used when no `-r` flag is passed
+- NEAREST formula: `out[i,j] = src[2i, 2j]` — picks the top-left pixel of each 2×2 block, discards the other 3 (75% of data lost per level)
+- AVERAGE formula: `out[i,j] = Σ valid_src_pixels / count_valid` — all pixels in the block contribute; NoData pixels excluded from sum and count
+- NEAREST is correct for **categorical data** (land cover classes, labels) where averaging would create meaningless blended values
+- AVERAGE is correct for **continuous data** (elevation, imagery, temperature) — NEAREST can make narrow features (a ridge, a river) disappear entirely at coarser levels depending on pixel alignment
+- Our benchmark compares both tools using AVERAGE (`-r average` on `gdal_translate`) — an apples-to-apples comparison
+
 ## NoData Handling
 
 - Without NoData masking, averaging `-9999` NoData pixels into real elevation values produces severely corrupted overview pixels (e.g. min dropping to -9842 instead of -4.93)

@@ -8,9 +8,21 @@ This project takes GDAL's COG generation pipeline and replaces the pyramid/overv
 
 **GDAL is a required system dependency.** This project links against the installed GDAL library and does not bundle it.
 
+### Why AVERAGE resampling
+
+GDAL's default overview resampling is **NEAREST** — it picks one pixel from each 2×2 block and discards the rest. For continuous data like elevation, imagery, or temperature, this means 75% of the signal is thrown away at each level. A ridge that's one pixel wide at full resolution can vanish entirely at the next overview level depending on which pixel happened to get selected.
+
+`mlx_translate` uses **AVERAGE** instead: every pixel in each 2×2 block contributes to the output. For a 2× downsample:
+
+```
+out[i,j] = (src[2i,2j] + src[2i,2j+1] + src[2i+1,2j] + src[2i+1,2j+1]) / count_valid
+```
+
+This preserves the signal energy across zoom levels and is the physically correct choice for any continuous raster.
+
 ## Future Scope
 
-- **Resampling acceleration** — offload bilinear, cubic, and lanczos resampling algorithms to Apple Silicon via MLX, since these are matrix operations that map naturally to GPU execution
+- Support additional resampling algorithms (bilinear, cubic, lanczos) on GPU — these involve larger kernels but map naturally to MLX array ops
 
 ## Usage
 
