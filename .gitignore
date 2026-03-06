@@ -49,6 +49,7 @@ htmlcov/
 *.tif
 *.tiff
 *.geotiff
+*.aux.xml
 
 # Test data exceptions
 !tests/sample_dem.tif
