@@ -15,14 +15,18 @@ This project takes GDAL's COG generation pipeline and replaces the pyramid/overv
 ## Usage
 
 ```bash
-mlx_translate input.tif output_cog.tif -of COG -co COMPRESS=LZW
+build/mlx_translate input.tif output_cog.tif
 ```
 
-Just replace `gdal_translate` with `mlx_translate`.
+Outputs a COG with LZW compression by default. Pass `-co KEY=VALUE` to override creation options:
+
+```bash
+build/mlx_translate input.tif output_cog.tif -co COMPRESS=DEFLATE
+```
 
 ## Installation
 
-not yet
+No pre-built binaries yet — build from source (see below).
 
 ## Development
 
@@ -41,9 +45,26 @@ make
 ctest --output-on-failure
 ```
 
+Three test suites run via `ctest`:
+
+- `test_mlx` — verifies MLX install, GPU device access, and basic array ops
+- `test_overview_dims` — verifies overview dimensions match GDAL's `ceil(N/2)` convention across even/odd/multi-level inputs
+- `test_cog_stats` — runs both GDAL and MLX COG generation on a real DEM and checks that raster stats are within 5% at every overview level
+
+## Benchmarks
+
+Tested on `sample_dem.tif` (4772×5125, 1-band Float32 DEM) on an M1 Pro (16 GB), 5 runs:
+
+| tool | avg |
+|---|---|
+| `gdal_translate` | 2.028s |
+| `mlx_translate` | 1.608s |
+
+**1.26x faster.** Run 1 is slower due to Metal shader compilation — subsequent runs are consistent.
+
 ## Contributing
 
-I'm not yet sure of what this does so dont contribute yet.
+This is an early-stage project. Contributions are welcome once the core pipeline stabilises.
 
 ## License
 
