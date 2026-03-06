@@ -53,14 +53,14 @@ Three test suites run via `ctest`:
 
 ## Benchmarks
 
-Tested on `sample_dem.tif` (4772×5125, 1-band Float32 DEM) on an M1 Pro (16 GB), 5 runs:
+Tested on `sample_dem.tif` (4772×5125, 1-band Float32 DEM) on an M1 Pro (16 GB), 5 runs, both using AVERAGE resampling:
 
 | tool | avg |
 |---|---|
-| `gdal_translate` | 2.028s |
-| `mlx_translate` | 1.608s |
+| `gdal_translate -r average` | 1.771s |
+| `mlx_translate` | 1.480s |
 
-**1.26x faster.** Run 1 is slower due to Metal shader compilation — subsequent runs are consistent.
+**1.19x faster.** Run 1 is slower due to Metal shader compilation — subsequent runs are consistent.
 
 ## Contributing
 

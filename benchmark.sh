@@ -68,7 +68,7 @@ run_benchmark() {
 }
 
 run_benchmark "gdal_translate" \
-    "gdal_translate $INPUT $GDAL_OUT -of COG -co COMPRESS=LZW -co OVERVIEWS=AUTO" \
+    "gdal_translate $INPUT $GDAL_OUT -of COG -co COMPRESS=LZW -co OVERVIEWS=AUTO -r average" \
     "$GDAL_OUT"
 
 run_benchmark "mlx_translate" \

@@ -52,9 +52,9 @@
 - `build/` is gitignored — must be recreated on fresh clone
 - The 2-pass approach (NEAREST to allocate structure, then MLX to overwrite) adds overhead — real gains will be larger on bigger rasters where overview computation dominates I/O time
 
-### Results (sample_dem.tif, M1 Pro, 5 runs)
+### Results (sample_dem.tif, M1 Pro, 5 runs, both using AVERAGE resampling)
 
 | tool | min | max | avg |
 |---|---|---|---|
-| `gdal_translate` | 1.774s | 3.025s | 2.028s |
-| `mlx_translate` | 1.468s | 2.133s | 1.608s |
+| `gdal_translate -r average` | 1.753s | 1.817s | 1.771s |
+| `mlx_translate` | 1.465s | 1.490s | 1.480s |
