@@ -65,3 +65,6 @@ htmlcov/
 
 # Notes/Dev scripts
 scratch
+
+# Logs
+*.log
