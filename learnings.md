@@ -26,8 +26,8 @@
 
 1. Open source with GDAL
 2. Create in-memory temp GTiff via `/vsimem/`
-3. Call `BuildOverviews("NEAREST", ...)` on temp — allocates overview band structure (fast CPU, placeholder data)
-4. Call `MLXBuildOverviews()` — overwrites overview bands with GPU-computed average downsampling
+3. Call `BuildOverviews("NONE", ...)` on temp — allocates overview band structure with zero CPU compute (see NONE resampling note below)
+4. Call `MLXBuildOverviews()` — fills overview bands with GPU-computed average downsampling
 5. Create final COG from temp using COG driver with `OVERVIEWS=FORCE_USE_EXISTING`
 
 ## MLX API
@@ -60,21 +60,27 @@
 - `sample_dem.tif` lives in `tests/` — gitignored via `*.tif` but explicitly unignored via `!tests/sample_dem.tif`
 - `build/` is gitignored — must be recreated on fresh clone
 
-### Results (sample_dem.tif, M1 Pro, 5 runs, both using AVERAGE resampling)
-
-| tool | min | max | avg |
-|---|---|---|---|
-| `gdal_translate -r average` | 1.753s | 1.817s | 1.771s |
-| `mlx_translate` | 1.465s | 1.490s | 1.480s |
-
 ### Benchmark methodology notes
 
 - `mlx_translate` copies the source into `/vsimem/` (RAM filesystem) — all reads hit RAM throughout
-- `gdal_translate` reads from disk, but macOS's OS page cache keeps the file in RAM after the first read — runs 2–5 are already reading from RAM (consistent times of ~1.793–1.811s confirm no disk variance)
-- Setting `GDAL_CACHEMAX=100` (to match the ~97.7MB uncompressed raster) made no meaningful difference (~1.771s → ~1.808s), confirming the OS page cache was already serving from RAM
-- The ~1.18x gap **persists even when both tools are effectively reading from RAM**, so it is not purely an I/O artefact — but `/vsimem/` vs OS page cache still have different overhead (no VFS layer vs VFS layer), so the split between I/O and compute is still not fully isolated
-- The two-pass approach (NEAREST + MLX) means the source and overview bands are each touched twice by `mlx_translate` vs once by `gdal_translate` — the GPU is overcoming this overhead and still winning, which is a more meaningful signal than first understood
-- **To fully isolate GPU vs CPU compute**: benchmark only `MLXBuildOverviews()` vs `GDALRegenerateOverviewsEx()` with the data already in memory for both
+- `gdal_translate` reads from disk, but macOS's OS page cache keeps the file in RAM after the first read — subsequent runs confirm no disk variance
+- Cannot compare speedup ratios across different benchmark sessions — system state, memory pressure, and page cache warmth all vary; only absolute times within the same session are meaningful
+
+### MLX vs GDAL — architectural differences
+
+- **Execution hardware**: GDAL uses CPU SIMD (NEON on Apple Silicon, single-threaded per band via `GDALResampleChunk_AverageOrRMS`). MLX dispatches to the Apple Silicon GPU via Metal — massively parallel
+- **Memory access pattern**: GDAL processes in horizontal chunks/strips — reads a few rows at a time, writes them, repeats. Designed to handle rasters larger than RAM. MLX loads the entire band into GPU memory once, computes all levels, writes back — simpler but requires the full band to fit in memory
+- **Overview chain**: both cascade identically — level N is sourced from level N-1, not from the original band. GDAL does this explicitly in `GDALRegenerateCascadingOverviews()` for AVERAGE; MLX does it via `current = downsampled`
+- **Resampling math**: same 2×2 box filter, different form — GDAL is a pixel loop with SIMD intrinsics; MLX expresses it as `reshape([H, 2, W, 2])` + `mean([1, 3])` which the GPU executes as a single kernel
+- **COG assembly**: identical — both use the same GDAL COG driver with `OVERVIEWS=FORCE_USE_EXISTING`
+- **Key architectural constraint**: MLX requires the full band to fit in GPU/unified memory. GDAL's chunked model handles arbitrarily large rasters. This is the one real limitation of the MLX approach
+
+### Overview structure allocation — NONE resampling
+
+- `BuildOverviews("NONE", ...)` is a valid public API call — GDAL creates the TIFF IFD structures (overview band slots at correct dimensions) but immediately returns without computing any pixel data (`GDALRegenerateOverviewsEx` bails out at the `EQUAL(pszResampling, "NONE")` check in `overview.cpp:4816`)
+- This replaces the previous NEAREST warmup pass — we used to call `BuildOverviews("NEAREST", ...)` just to allocate structure, which wasted a full CPU resample pass that was immediately overwritten by MLX
+- Switching to NONE eliminated the wasted CPU pass entirely — MLX absolute times improved (~0.95s at 20cm, ~0.64s at 40cm, ~0.25s at 80cm)
+- Cannot compare speedup ratios across different benchmark sessions — only absolute times within the same session are meaningful
 
 ### New methodology — multi-GSD synthetic DEMs
 

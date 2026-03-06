@@ -20,6 +20,12 @@ out[i,j] = (src[2i,2j] + src[2i,2j+1] + src[2i+1,2j] + src[2i+1,2j+1]) / count_v
 
 This preserves signal energy across zoom levels and is the physically correct choice for any continuous raster.
 
+## Limitations
+
+`mlx_translate` loads each raster band fully into unified memory before dispatching to the GPU. This means **the uncompressed raster must fit within available system memory**. On Apple Silicon, CPU and GPU share the same memory pool, so available memory is whatever is free at runtime across both.
+
+GDAL's approach processes in horizontal strips and handles arbitrarily large rasters. If your input exceeds available memory, use `gdal_translate` instead.
+
 ## Build
 
 Install dependencies:
