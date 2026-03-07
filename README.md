@@ -10,9 +10,9 @@ mlx-cog-gen replaces GDAL's CPU-based pyramid/overview generation with an MLX im
 
 ## Why Apple Silicon
 
-On an x86 machine, GDAL's overview generation may or may not be leaving performance on the table depending on whether a discrete GPU is present. The behaviour varies by hardware configuration — some machines have it, some don't, and GDAL never uses it regardless.
+On an x86 machine, GDAL's overview generation may or may not be leaving performance on the table depending on whether a discrete GPU is present. The behaviour varies by hardware configuration: some machines have it, some don't, and GDAL never uses it regardless.
 
-On Apple Silicon the situation is unambiguous. Every M-series device — from the base M1 MacBook Air to the M4 Mac Pro — ships with a high-performance GPU and Neural Engine in the same package as the CPU, sharing the same memory pool. GDAL uses none of it. The GPU is completely idle during the entire overview generation step on every Apple Silicon machine, every single time.
+On Apple Silicon the situation is deterministic. Every M-series device, from the base M1 MacBook Air to the M4 Mac Pro, ships with a high-performance GPU and Neural Engine in the same package as the CPU, sharing the same memory pool. GDAL uses none of it. The GPU is completely idle during the entire overview generation step on every Apple Silicon machine, every single time.
 
 This is not a niche edge case. Apple Silicon has become the dominant platform for professional macOS users including a large portion of the geospatial community. Optimising this workflow for Apple Silicon means every one of those machines benefits — not a subset with a particular hardware configuration, but all of them unconditionally.
 
@@ -26,11 +26,13 @@ GDAL's default overview resampling is **NEAREST** — it picks one pixel from ea
 out[i,j] = (src[2i,2j] + src[2i,2j+1] + src[2i+1,2j] + src[2i+1,2j+1]) / count_valid
 ```
 
-This preserves signal energy across zoom levels and is the physically correct choice for any continuous raster.
+This preserves signal energy across zoom levels and is the physically correct choice for any continuous raster. AVERAGE is also the simplest averaging method: a straightforward 2×2 box filter. More sophisticated methods like bilinear or cubic use larger kernels and are on the roadmap.
 
 ## Limitations
 
 `mlx_translate` loads each raster band fully into unified memory before dispatching to the GPU. This means **the uncompressed raster must fit within available system memory**. On Apple Silicon, CPU and GPU share the same memory pool, so available memory is whatever is free at runtime across both.
+
+To estimate uncompressed size: `width × height × bands × bytes_per_pixel`. For a Float32 single-band raster that is 30000×30000, this is 30000 × 30000 × 1 × 4 = ~3.4 GB. For a uint16 RGB raster of the same dimensions it would be 30000 × 30000 × 3 × 2 = ~5.1 GB.
 
 GDAL's approach processes in horizontal strips and handles arbitrarily large rasters. If your input exceeds available memory, use `gdal_translate` instead.
 
@@ -86,11 +88,13 @@ Speedup grows with raster size — the GPU becomes increasingly efficient as the
 
 ## Roadmap
 
-- Support additional resampling algorithms (bilinear, cubic, lanczos) — larger kernels that map naturally to MLX array ops
+- Additional resampling algorithms (bilinear, cubic, lanczos)
+- GPU-accelerated tile block creation (512×512 blocking, currently delegated to GDAL)
+- OOM detection and graceful fallback to GDAL
 
 ## Contributing
 
-This is an early-stage project. Contributions are welcome once the core pipeline stabilises.
+Open an issue before raising a PR. Describe what you want to do and why in as much detail as possible. Once there is agreement on the approach, go ahead and open the PR.
 
 ## License
 
