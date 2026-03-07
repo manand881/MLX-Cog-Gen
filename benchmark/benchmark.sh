@@ -97,8 +97,20 @@ echo "Warming up MLX runtime (untimed)..."
 rm -f "$MLX_OUT"
 echo "  Done."
 
-# Accumulate table rows: "raster|dims|gdal_avg|mlx_avg|speedup"
-ROWS=()
+# Accumulate table rows per method: "raster|dims|fsize|gdal_avg|mlx_avg|speedup"
+ROWS_AVERAGE=()
+ROWS_BILINEAR=()
+
+speedup_label() {
+    local gdal=$1 mlx=$2
+    local s
+    s=$(echo "scale=2; $gdal / $mlx" | bc)
+    if (( $(echo "$s >= 1" | bc -l) )); then
+        echo "${s}x faster"
+    else
+        echo "$(echo "scale=2; $mlx / $gdal" | bc)x slower"
+    fi
+}
 
 for INPUT in "${RASTERS[@]}"; do
     NAME=$(basename "$INPUT" .tif)
@@ -110,41 +122,47 @@ for INPUT in "${RASTERS[@]}"; do
     echo "  $NAME  ($DIMS px, $FSIZE)"
     echo "========================================"
 
-    GDAL_AVG=$(bench_tool "gdal_translate" \
+    echo "  -- AVERAGE --" >&2
+    GDAL_AVG_AVG=$(bench_tool "gdal average" \
         "gdal_translate $INPUT $GDAL_OUT -of COG -co COMPRESS=LZW -co OVERVIEWS=AUTO -r average")
-
-    MLX_AVG=$(bench_tool "mlx_translate" \
-        "$REPO_ROOT/build/mlx_translate $INPUT $MLX_OUT")
-
+    MLX_AVG_AVG=$(bench_tool "mlx average" \
+        "$REPO_ROOT/build/mlx_translate $INPUT $MLX_OUT -r AVERAGE")
     rm -f "$GDAL_OUT" "$MLX_OUT"
+    ROWS_AVERAGE+=("$NAME|$DIMS|$FSIZE|${GDAL_AVG_AVG}s|${MLX_AVG_AVG}s|$(speedup_label "$GDAL_AVG_AVG" "$MLX_AVG_AVG")")
 
-    speedup=$(echo "scale=2; $GDAL_AVG / $MLX_AVG" | bc)
-    if (( $(echo "$speedup >= 1" | bc -l) )); then
-        ratio="${speedup}x faster"
-    else
-        slower=$(echo "scale=2; $MLX_AVG / $GDAL_AVG" | bc)
-        ratio="${slower}x slower"
-    fi
-
-    ROWS+=("$NAME|$DIMS|${GDAL_AVG}s|${MLX_AVG}s|$ratio")
+    echo "  -- BILINEAR --" >&2
+    GDAL_AVG_BIL=$(bench_tool "gdal bilinear" \
+        "gdal_translate $INPUT $GDAL_OUT -of COG -co COMPRESS=LZW -co OVERVIEWS=AUTO -r bilinear")
+    MLX_AVG_BIL=$(bench_tool "mlx bilinear" \
+        "$REPO_ROOT/build/mlx_translate $INPUT $MLX_OUT -r BILINEAR")
+    rm -f "$GDAL_OUT" "$MLX_OUT"
+    ROWS_BILINEAR+=("$NAME|$DIMS|$FSIZE|${GDAL_AVG_BIL}s|${MLX_AVG_BIL}s|$(speedup_label "$GDAL_AVG_BIL" "$MLX_AVG_BIL")")
 done
 
 # ---------------------------------------------------------------------------
-# Consolidated table
+# Consolidated tables
 # ---------------------------------------------------------------------------
-echo ""
-echo "========================================"
-echo "  Results"
-echo "========================================"
-printf "%-20s %-18s %-12s %-12s %-16s\n" "Raster" "Dimensions" "GDAL avg" "MLX avg" "Speedup"
-printf "%-20s %-18s %-12s %-12s %-16s\n" "------" "----------" "--------" "-------" "-------"
-for row in "${ROWS[@]}"; do
-    IFS='|' read -r raster dims gdal_avg mlx_avg speedup <<< "$row"
-    printf "%-20s %-18s %-12s %-12s %-16s\n" \
-        "$(echo "$raster" | xargs)" \
-        "$(echo "$dims" | xargs)" \
-        "$(echo "$gdal_avg" | xargs)" \
-        "$(echo "$mlx_avg" | xargs)" \
-        "$(echo "$speedup" | xargs)"
-done
-echo "========================================"
+print_table() {
+    local title=$1; shift
+    local rows=("$@")
+    echo ""
+    echo "========================================"
+    echo "  $title"
+    echo "========================================"
+    printf "%-14s %-18s %-8s %-12s %-12s %-16s\n" "Raster" "Dimensions" "Size" "GDAL avg" "MLX avg" "Speedup"
+    printf "%-14s %-18s %-8s %-12s %-12s %-16s\n" "------" "----------" "----" "--------" "-------" "-------"
+    for row in "${rows[@]}"; do
+        IFS='|' read -r raster dims fsize gdal_avg mlx_avg speedup <<< "$row"
+        printf "%-14s %-18s %-8s %-12s %-12s %-16s\n" \
+            "$(echo "$raster" | xargs)" \
+            "$(echo "$dims"   | xargs)" \
+            "$(echo "$fsize"  | xargs)" \
+            "$(echo "$gdal_avg" | xargs)" \
+            "$(echo "$mlx_avg"  | xargs)" \
+            "$(echo "$speedup"  | xargs)"
+    done
+    echo "========================================"
+}
+
+print_table "Results — AVERAGE"  "${ROWS_AVERAGE[@]}"
+print_table "Results — BILINEAR" "${ROWS_BILINEAR[@]}"

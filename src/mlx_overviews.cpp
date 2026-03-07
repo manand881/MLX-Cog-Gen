@@ -80,7 +80,102 @@ static mx::array mlx_downsample_average(const mx::array &input, int targetH,
     return mx::where(allNodata, nodataFill, avg);
 }
 
-CPLErr MLXBuildOverviews(GDALDataset *poDS, int nBands, const int *panBandList)
+/**
+ * Bilinear 2x downsample on GPU with NoData masking.
+ *
+ * Matches GDAL's BILINEAR overview resampling: a separable tent filter applied
+ * as two sequential 1D passes (horizontal then vertical).
+ *
+ * The tent filter kernel is GWKBilinear(x) = 1 - |x|  for |x| <= 1.
+ * For each output pixel i, the sample point in source space is:
+ *   x = (i + 0.5) * 2 - 0.5 = 2i + 0.5
+ * This lands halfway between source pixels 2i and 2i+1, so both get weight
+ * GWKBilinear(0.5) = 0.5. Applied identically in Y.
+ *
+ * Boundary clamping: odd dimensions are padded by replicating the last
+ * row/column before either pass, so the last output pixel at x = 2*(W-1)+0.5
+ * sees source pixel W-1 twice, giving it weight 1.0 — matching GDAL's
+ * behaviour of clamping the kernel to the valid source extent.
+ *
+ * For the no-NoData path this is implemented as two separable reshape+mean
+ * passes, which is structurally equivalent to GDAL's separable convolution.
+ * For the NoData path a 2D masked sum is used to match GDAL's 2D weight
+ * accumulation (a separable NoData pass would over-weight pixels that
+ * partially survived the horizontal pass).
+ *
+ * Numerical result for 2x with no NoData: identical to mlx_downsample_average
+ * because the equal 0.5/0.5 weights make the separable and box approaches
+ * produce the same sum. They diverge for non-2x factors and at NoData
+ * boundaries where the 2D weight distribution differs from a separable one.
+ */
+static mx::array mlx_downsample_bilinear(const mx::array &input, int targetH,
+                                         int targetW, float nodataVal,
+                                         bool hasNodata)
+{
+    int H = input.shape()[0];
+    int W = input.shape()[1];
+
+    // Pad odd dimensions: replicates last row/col to simulate kernel clamping
+    // at the boundary, matching GDAL's GDALResampleChunk_ConvolutionT behaviour.
+    mx::array padded = input;
+
+    if (targetH * 2 > H)
+    {
+        mx::array lastRow = mx::slice(padded, {H - 1, 0}, {H, W});
+        padded = mx::concatenate({padded, lastRow}, 0);
+    }
+
+    if (targetW * 2 > W)
+    {
+        int curH = padded.shape()[0];
+        mx::array lastCol = mx::slice(padded, {0, W - 1}, {curH, W});
+        padded = mx::concatenate({padded, lastCol}, 1);
+    }
+
+    int pH = padded.shape()[0];
+
+    if (!hasNodata)
+    {
+        // Horizontal pass: pair adjacent columns, apply tent weights (0.5, 0.5)
+        // reshape [pH, pW] → [pH, targetW, 2], mean over axis 2 → [pH, targetW]
+        mx::array horiz =
+            mx::mean(mx::reshape(padded, {pH, targetW, 2}),
+                     std::vector<int>{2});
+
+        // Vertical pass: pair adjacent rows, apply tent weights (0.5, 0.5)
+        // reshape [pH, targetW] → [targetH, 2, targetW], mean over axis 1
+        return mx::mean(mx::reshape(horiz, {targetH, 2, targetW}),
+                        std::vector<int>{1});
+    }
+
+    // NoData path: 2D masked weighted sum — matches GDAL's 2D weight
+    // accumulation in GDALResampleChunk_ConvolutionT more closely than a
+    // separable masked pass would.
+    mx::array nodataScalar = mx::array(nodataVal, mx::float32);
+    mx::array valid = mx::astype(
+        mx::logical_not(mx::equal(padded, nodataScalar)), mx::float32);
+
+    mx::array zeroed = mx::multiply(padded, valid);
+
+    mx::array dataR  = mx::reshape(zeroed, {targetH, 2, targetW, 2});
+    mx::array validR = mx::reshape(valid,  {targetH, 2, targetW, 2});
+
+    mx::array dataSum    = mx::sum(dataR,  std::vector<int>{1, 3});
+    mx::array validCount = mx::sum(validR, std::vector<int>{1, 3});
+
+    mx::array ones      = mx::ones({targetH, targetW}, mx::float32);
+    mx::array safeDenom = mx::maximum(validCount, ones);
+    mx::array result    = mx::divide(dataSum, safeDenom);
+
+    mx::array zeros     = mx::zeros({targetH, targetW}, mx::float32);
+    mx::array allNodata = mx::equal(validCount, zeros);
+    mx::array nodataFill = mx::full({targetH, targetW}, nodataVal, mx::float32);
+
+    return mx::where(allNodata, nodataFill, result);
+}
+
+CPLErr MLXBuildOverviews(GDALDataset *poDS, int nBands,
+                         const int *panBandList, ResampleMethod method)
 {
     for (int iBand = 0; iBand < nBands; iBand++)
     {
@@ -122,7 +217,9 @@ CPLErr MLXBuildOverviews(GDALDataset *poDS, int nBands, const int *panBandList)
             int oH = poOvr->GetYSize();
 
             mx::array downsampled =
-                mlx_downsample_average(current, oH, oW, nodataVal, hasNodata);
+                (method == ResampleMethod::BILINEAR)
+                    ? mlx_downsample_bilinear(current, oH, oW, nodataVal, hasNodata)
+                    : mlx_downsample_average(current, oH, oW, nodataVal, hasNodata);
             mx::eval(downsampled);
 
             // Write result into the overview band
@@ -144,8 +241,9 @@ CPLErr MLXBuildOverviews(GDALDataset *poDS, int nBands, const int *panBandList)
             current = downsampled;
         }
 
-        fprintf(stderr, "  Band %d: %d overview level(s) computed on GPU\n",
-                panBandList[iBand], nOvrCount);
+        fprintf(stderr, "  Band %d: %d overview level(s) computed on GPU (%s)\n",
+                panBandList[iBand], nOvrCount,
+                method == ResampleMethod::BILINEAR ? "bilinear" : "average");
     }
 
     return CE_None;

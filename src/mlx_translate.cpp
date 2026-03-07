@@ -37,19 +37,34 @@ int main(int argc, char *argv[])
     {
         fprintf(stderr,
                 "Usage: mlx_translate <input.tif> <output_cog.tif> "
-                "[-co KEY=VALUE ...]\n");
+                "[-r AVERAGE|BILINEAR] [-co KEY=VALUE ...]\n");
         return 1;
     }
 
     const char *inputPath = argv[1];
     const char *outputPath = argv[2];
 
-    // Parse -co options
+    // Parse -r (resampling method) and -co options
+    ResampleMethod resampleMethod = ResampleMethod::AVERAGE;
     char **papszCOOptions = nullptr;
-    for (int i = 3; i < argc - 1; i++)
+    for (int i = 3; i < argc; i++)
     {
-        if (EQUAL(argv[i], "-co"))
+        if (EQUAL(argv[i], "-r") && i + 1 < argc)
+        {
+            const char *method = argv[++i];
+            if (EQUAL(method, "BILINEAR"))
+                resampleMethod = ResampleMethod::BILINEAR;
+            else if (!EQUAL(method, "AVERAGE"))
+            {
+                fprintf(stderr, "Unknown resampling method: %s. "
+                                "Supported: AVERAGE, BILINEAR\n", method);
+                return 1;
+            }
+        }
+        else if (EQUAL(argv[i], "-co") && i + 1 < argc)
+        {
             papszCOOptions = CSLAddString(papszCOOptions, argv[++i]);
+        }
     }
 
     // Default compression
@@ -126,7 +141,7 @@ int main(int argc, char *argv[])
         for (int i = 0; i < nBands; i++)
             bandList[i] = i + 1;
 
-        eErr = MLXBuildOverviews(poTmpDS, nBands, bandList.data());
+        eErr = MLXBuildOverviews(poTmpDS, nBands, bandList.data(), resampleMethod);
         if (eErr != CE_None)
         {
             fprintf(stderr, "MLX overview generation failed\n");
