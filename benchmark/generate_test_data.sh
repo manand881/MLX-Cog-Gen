@@ -75,6 +75,7 @@ for i in "${!LABELS[@]}"; do
     fi
 
     gdal_grid \
+        --config GDAL_NUM_THREADS ALL_CPUS \
         -a linear:radius=-1:nodata=-9999 \
         -zfield "elevation" \
         -txe "$XMIN" "$XMAX" \
@@ -83,6 +84,7 @@ for i in "${!LABELS[@]}"; do
         -of GTiff \
         -ot Float32 \
         -co COMPRESS=LZW \
+        -co PREDICTOR=3 \
         "$VRT" "$output"
 
     dims=$(gdalinfo "$output" | awk '/^Size is/{print $3, $4}')
@@ -96,17 +98,20 @@ echo ""
 echo "========================================"
 echo "  Verifying outputs"
 echo "========================================"
-
+printf "%-10s  %-18s  %-10s  %-10s  %s\n" "Label" "Dimensions" "Type" "NoData" "Size"
 for i in "${!LABELS[@]}"; do
     label="${LABELS[$i]}"
     output="$DATA_DIR/dem_${label}.tif"
 
-    echo ""
-    echo "--- $label ---"
     if [ -f "$output" ]; then
-        gdalinfo "$output"
+        info=$(gdalinfo "$output")
+        dims=$(echo "$info"   | awk '/^Size is/{w=$3; sub(/,/,"",w); printf "%sx%s", w, $4}')
+        dtype=$(echo "$info"  | awk '/Type=/{sub(/.*Type=/,""); sub(/,.*/,""); print; exit}')
+        nodata=$(echo "$info" | awk '/NoData Value=/{sub(/.*NoData Value=/,""); print; exit}')
+        fsize=$(du -sh "$output" | awk '{print $1}')
+        printf "%-10s  %-18s  %-10s  %-10s  %s\n" "$label" "$dims" "$dtype" "$nodata" "$fsize"
     else
-        echo "  MISSING: $output"
+        printf "%-10s  MISSING\n" "$label"
     fi
 done
 

@@ -12,6 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DATA_DIR="$SCRIPT_DIR/data"
 ITERATIONS=${1:-5}
+LOG_FILE="$SCRIPT_DIR/benchmark-$(date '+%Y-%m-%d-%H-%M-%S').log"
+exec > >(tee "$LOG_FILE") 2>&1
 GDAL_OUT="/tmp/benchmark_gdal_out.tif"
 MLX_OUT="/tmp/benchmark_mlx_out.tif"
 
@@ -97,7 +99,7 @@ echo "Warming up MLX runtime (untimed)..."
 rm -f "$MLX_OUT"
 echo "  Done."
 
-# Accumulate table rows per method: "raster|dims|fsize|gdal_avg|mlx_avg|speedup"
+# Accumulate table rows per method: "raster|dims|fsize|gdal_1t|gdal_nt|mlx_avg|speedup_1t|speedup_nt"
 ROWS_AVERAGE=()
 ROWS_BILINEAR=()
 
@@ -123,20 +125,24 @@ for INPUT in "${RASTERS[@]}"; do
     echo "========================================"
 
     echo "  -- AVERAGE --" >&2
-    GDAL_AVG_AVG=$(bench_tool "gdal average" \
+    GDAL_AVG_1T=$(bench_tool "gdal average (1 thread)" \
         "gdal_translate $INPUT $GDAL_OUT -of COG -co COMPRESS=LZW -co OVERVIEWS=AUTO -r average")
+    GDAL_AVG_NT=$(bench_tool "gdal average (ALL_CPUS)" \
+        "gdal_translate --config GDAL_NUM_THREADS ALL_CPUS $INPUT $GDAL_OUT -of COG -co COMPRESS=LZW -co OVERVIEWS=AUTO -r average")
     MLX_AVG_AVG=$(bench_tool "mlx average" \
         "$REPO_ROOT/build/mlx_translate $INPUT $MLX_OUT -r AVERAGE")
     rm -f "$GDAL_OUT" "$MLX_OUT"
-    ROWS_AVERAGE+=("$NAME|$DIMS|$FSIZE|${GDAL_AVG_AVG}s|${MLX_AVG_AVG}s|$(speedup_label "$GDAL_AVG_AVG" "$MLX_AVG_AVG")")
+    ROWS_AVERAGE+=("$NAME|$DIMS|$FSIZE|${GDAL_AVG_1T}s|${GDAL_AVG_NT}s|${MLX_AVG_AVG}s|$(speedup_label "$GDAL_AVG_1T" "$MLX_AVG_AVG")|$(speedup_label "$GDAL_AVG_NT" "$MLX_AVG_AVG")")
 
     echo "  -- BILINEAR --" >&2
-    GDAL_AVG_BIL=$(bench_tool "gdal bilinear" \
+    GDAL_BIL_1T=$(bench_tool "gdal bilinear (1 thread)" \
         "gdal_translate $INPUT $GDAL_OUT -of COG -co COMPRESS=LZW -co OVERVIEWS=AUTO -r bilinear")
+    GDAL_BIL_NT=$(bench_tool "gdal bilinear (ALL_CPUS)" \
+        "gdal_translate --config GDAL_NUM_THREADS ALL_CPUS $INPUT $GDAL_OUT -of COG -co COMPRESS=LZW -co OVERVIEWS=AUTO -r bilinear")
     MLX_AVG_BIL=$(bench_tool "mlx bilinear" \
         "$REPO_ROOT/build/mlx_translate $INPUT $MLX_OUT -r BILINEAR")
     rm -f "$GDAL_OUT" "$MLX_OUT"
-    ROWS_BILINEAR+=("$NAME|$DIMS|$FSIZE|${GDAL_AVG_BIL}s|${MLX_AVG_BIL}s|$(speedup_label "$GDAL_AVG_BIL" "$MLX_AVG_BIL")")
+    ROWS_BILINEAR+=("$NAME|$DIMS|$FSIZE|${GDAL_BIL_1T}s|${GDAL_BIL_NT}s|${MLX_AVG_BIL}s|$(speedup_label "$GDAL_BIL_1T" "$MLX_AVG_BIL")|$(speedup_label "$GDAL_BIL_NT" "$MLX_AVG_BIL")")
 done
 
 # ---------------------------------------------------------------------------
@@ -146,22 +152,26 @@ print_table() {
     local title=$1; shift
     local rows=("$@")
     echo ""
-    echo "========================================"
+    echo "=================================================================="
     echo "  $title"
-    echo "========================================"
-    printf "%-14s %-18s %-8s %-12s %-12s %-16s\n" "Raster" "Dimensions" "Size" "GDAL avg" "MLX avg" "Speedup"
-    printf "%-14s %-18s %-8s %-12s %-12s %-16s\n" "------" "----------" "----" "--------" "-------" "-------"
+    echo "=================================================================="
+    printf "%-14s %-18s %-8s %-12s %-12s %-12s %-18s %-18s\n" \
+        "Raster" "Dimensions" "Size" "GDAL 1T" "GDAL nT" "MLX" "vs GDAL 1T" "vs GDAL nT"
+    printf "%-14s %-18s %-8s %-12s %-12s %-12s %-18s %-18s\n" \
+        "------" "----------" "----" "-------" "-------" "---" "----------" "----------"
     for row in "${rows[@]}"; do
-        IFS='|' read -r raster dims fsize gdal_avg mlx_avg speedup <<< "$row"
-        printf "%-14s %-18s %-8s %-12s %-12s %-16s\n" \
-            "$(echo "$raster" | xargs)" \
-            "$(echo "$dims"   | xargs)" \
-            "$(echo "$fsize"  | xargs)" \
-            "$(echo "$gdal_avg" | xargs)" \
-            "$(echo "$mlx_avg"  | xargs)" \
-            "$(echo "$speedup"  | xargs)"
+        IFS='|' read -r raster dims fsize gdal_1t gdal_nt mlx_avg speedup_1t speedup_nt <<< "$row"
+        printf "%-14s %-18s %-8s %-12s %-12s %-12s %-18s %-18s\n" \
+            "$(echo "$raster"     | xargs)" \
+            "$(echo "$dims"       | xargs)" \
+            "$(echo "$fsize"      | xargs)" \
+            "$(echo "$gdal_1t"    | xargs)" \
+            "$(echo "$gdal_nt"    | xargs)" \
+            "$(echo "$mlx_avg"    | xargs)" \
+            "$(echo "$speedup_1t" | xargs)" \
+            "$(echo "$speedup_nt" | xargs)"
     done
-    echo "========================================"
+    echo "=================================================================="
 }
 
 print_table "Results — AVERAGE"  "${ROWS_AVERAGE[@]}"
