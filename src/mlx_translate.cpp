@@ -72,6 +72,11 @@ int main(int argc, char *argv[])
         papszCOOptions =
             CSLSetNameValue(papszCOOptions, "COMPRESS", "LZW");
 
+    // Enable multi-threaded GDAL operations for the entire pipeline:
+    // - source tile decompression during temp GTiff creation
+    // - LZW tile compression during final COG write
+    CPLSetConfigOption("GDAL_NUM_THREADS", "ALL_CPUS");
+
     GDALAllRegister();
 
     // Open source

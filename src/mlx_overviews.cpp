@@ -3,7 +3,6 @@
 #include <mlx/mlx.h>
 
 #include <cstdio>
-#include <cstring>
 #include <vector>
 
 namespace mx = mlx::core;
@@ -222,12 +221,10 @@ CPLErr MLXBuildOverviews(GDALDataset *poDS, int nBands,
                     : mlx_downsample_average(current, oH, oW, nodataVal, hasNodata);
             mx::eval(downsampled);
 
-            // Write result into the overview band
-            std::vector<float> ovrData(static_cast<size_t>(oW) * oH);
-            std::memcpy(ovrData.data(), downsampled.data<float>(),
-                        static_cast<size_t>(oW) * oH * sizeof(float));
-
-            eErr = poOvr->RasterIO(GF_Write, 0, 0, oW, oH, ovrData.data(),
+            // Write result directly from MLX unified memory into the overview
+            // band — no intermediate copy needed since eval() has completed.
+            eErr = poOvr->RasterIO(GF_Write, 0, 0, oW, oH,
+                                   const_cast<float *>(downsampled.data<float>()),
                                    oW, oH, GDT_Float32, 0, 0);
             if (eErr != CE_None)
             {

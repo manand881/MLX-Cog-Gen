@@ -94,31 +94,33 @@ Supported resampling methods: `AVERAGE` (default), `BILINEAR`.
 
 ## Benchmarks
 
-Tested on an M1 Pro (16 GB), 5 runs per method. Rasters are Float32 single-band DEMs generated via TIN interpolation at six GSDs. GDAL 1T is the default single-threaded invocation; GDAL nT uses `ALL_CPUS` (10 cores).
+Tested on an M1 Pro (16 GB), 5 runs per method. Rasters are Float32 single-band DEMs generated via TIN interpolation at six GSDs. GDAL 1T is the default single-threaded invocation; GDAL nT uses `ALL_CPUS` (10 cores). MLX pipeline uses parallel LZW tile compression (`GDAL_NUM_THREADS=ALL_CPUS`) for the final COG write.
 
 **AVERAGE**
 
 | Raster | Dimensions | File size | GDAL 1T | GDAL nT | MLX | vs GDAL 1T | vs GDAL nT |
 |---|---|---|---|---|---|---|---|
-| dem_160cm | 1873×1817 | 4.6 MB | 0.345s | 0.247s | 0.359s | 1.04× slower | 1.45× slower |
-| dem_80cm | 3746×3634 | 14 MB | 0.799s | 0.395s | 0.758s | 1.05× faster | 1.91× slower |
-| dem_40cm | 7491×7268 | 39 MB | 2.391s | 0.918s | 2.141s | 1.11× faster | 2.33× slower |
-| dem_20cm | 14982×14536 | 128 MB | 8.249s | 2.750s | 7.307s | 1.12× faster | 2.65× slower |
-| dem_10cm | 29967×29074 | 323 MB | 29.951s | 9.629s | 8.265s | 3.62× faster | 1.16× faster |
-| dem_5cm | 59927×58141 | 928 MB | 112.255s | 34.203s | 22.175s | 5.06× faster | 1.54× faster |
+| dem_160cm | 1873×1817 | 4.6 MB | 0.345s | 0.248s | 0.326s | 1.06× faster | 1.31× slower |
+| dem_80cm | 3746×3634 | 14 MB | 0.793s | 0.396s | 0.499s | 1.59× faster | 1.26× slower |
+| dem_40cm | 7491×7268 | 39 MB | 2.341s | 0.876s | 1.014s | 2.31× faster | 1.16× slower |
+| dem_20cm | 14982×14536 | 128 MB | 7.974s | 2.778s | 2.671s | 2.98× faster | 1.04× faster |
+| dem_10cm | 29967×29074 | 323 MB | 29.814s | 9.519s | 5.947s | 5.01× faster | 1.60× faster |
+| dem_5cm | 59927×58141 | 928 MB | 113.549s | 35.896s† | 14.011s | 8.10× faster | 2.56× faster |
 
 **BILINEAR**
 
 | Raster | Dimensions | File size | GDAL 1T | GDAL nT | MLX | vs GDAL 1T | vs GDAL nT |
 |---|---|---|---|---|---|---|---|
-| dem_160cm | 1873×1817 | 4.6 MB | 0.350s | 0.255s | 0.359s | 1.02× slower | 1.40× slower |
-| dem_80cm | 3746×3634 | 14 MB | 0.833s | 0.408s | 0.785s | 1.06× faster | 1.92× slower |
-| dem_40cm | 7491×7268 | 39 MB | 2.493s | 0.917s | 2.223s | 1.12× faster | 2.42× slower |
-| dem_20cm | 14982×14536 | 128 MB | 9.290s | 2.872s | 7.209s | 1.28× faster | 2.51× slower |
-| dem_10cm | 29967×29074 | 323 MB | 33.193s | 9.852s | 7.252s | 4.57× faster | 1.35× faster |
-| dem_5cm | 59927×58141 | 928 MB | 127.890s | 36.945s | 22.390s | 5.71× faster | 1.65× faster |
+| dem_160cm | 1873×1817 | 4.6 MB | 0.351s | 0.248s | 0.324s | 1.08× faster | 1.30× slower |
+| dem_80cm | 3746×3634 | 14 MB | 0.832s | 0.405s | 0.503s | 1.65× faster | 1.24× slower |
+| dem_40cm | 7491×7268 | 39 MB | 2.446s | 0.914s | 1.015s | 2.41× faster | 1.11× slower |
+| dem_20cm | 14982×14536 | 128 MB | 9.004s | 3.076s | 2.803s | 3.21× faster | 1.10× faster |
+| dem_10cm | 29967×29074 | 323 MB | 33.944s | 9.870s | 5.930s | 5.72× faster | 1.66× faster |
+| dem_5cm | 59927×58141 | 928 MB | 129.143s | 36.508s | 14.472s | 8.92× faster | 2.52× faster |
 
-MLX beats GDAL nT starting at dem_10cm (323 MB) and wins by **1.54×** (AVERAGE) and **1.65×** (BILINEAR) at dem_5cm (~60k×58k pixels). MLX is slower than GDAL nT at all raster sizes below ~300 MB. MLX average and MLX bilinear run in nearly identical time since the GPU parallelises both uniformly. GDAL bilinear is 5–8% slower than GDAL average at large sizes due to the separable convolution kernel being more expensive than the box filter.
+† 2 of 5 runs excluded (machine sleep caused 691s and 842s outliers); average computed from 3 valid runs.
+
+MLX beats GDAL nT starting at dem_20cm (128 MB) and wins by **2.56×** (AVERAGE) and **2.52×** (BILINEAR) at dem_5cm (~60k×58k pixels). MLX is slower than GDAL nT at raster sizes below ~128 MB where Metal kernel launch overhead dominates over GPU compute time. MLX average and MLX bilinear run in nearly identical time since the GPU parallelises both uniformly.
 
 ## Roadmap
 
