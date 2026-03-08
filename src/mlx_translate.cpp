@@ -181,6 +181,11 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    // Note: OVERVIEW_RESAMPLING is not written to IMAGE_STRUCTURE metadata.
+    // The COG driver only stores it when it generates overviews itself.
+    // With FORCE_USE_EXISTING, GDAL ignores -co OVERVIEW_RESAMPLING and
+    // SetMetadataItem("...", "IMAGE_STRUCTURE") does not persist in GTiff.
+
     // Cleanup
     GDALClose(poCOGDS);
     GDALClose(poTmpDS);

@@ -126,9 +126,9 @@ for INPUT in "${RASTERS[@]}"; do
 
     echo "  -- AVERAGE --" >&2
     GDAL_AVG_1T=$(bench_tool "gdal average (1 thread)" \
-        "gdal_translate $INPUT $GDAL_OUT -of COG -co COMPRESS=LZW -co OVERVIEWS=AUTO -r average")
+        "gdal_translate $INPUT $GDAL_OUT -of COG -co COMPRESS=LZW -co OVERVIEWS=AUTO -co OVERVIEW_RESAMPLING=AVERAGE")
     GDAL_AVG_NT=$(bench_tool "gdal average (ALL_CPUS)" \
-        "gdal_translate --config GDAL_NUM_THREADS ALL_CPUS $INPUT $GDAL_OUT -of COG -co COMPRESS=LZW -co OVERVIEWS=AUTO -r average")
+        "gdal_translate --config GDAL_NUM_THREADS ALL_CPUS $INPUT $GDAL_OUT -of COG -co COMPRESS=LZW -co OVERVIEWS=AUTO -co OVERVIEW_RESAMPLING=AVERAGE")
     MLX_AVG_AVG=$(bench_tool "mlx average" \
         "$REPO_ROOT/build/mlx_translate $INPUT $MLX_OUT -r AVERAGE")
     rm -f "$GDAL_OUT" "$MLX_OUT"
@@ -136,9 +136,9 @@ for INPUT in "${RASTERS[@]}"; do
 
     echo "  -- BILINEAR --" >&2
     GDAL_BIL_1T=$(bench_tool "gdal bilinear (1 thread)" \
-        "gdal_translate $INPUT $GDAL_OUT -of COG -co COMPRESS=LZW -co OVERVIEWS=AUTO -r bilinear")
+        "gdal_translate $INPUT $GDAL_OUT -of COG -co COMPRESS=LZW -co OVERVIEWS=AUTO -co OVERVIEW_RESAMPLING=BILINEAR")
     GDAL_BIL_NT=$(bench_tool "gdal bilinear (ALL_CPUS)" \
-        "gdal_translate --config GDAL_NUM_THREADS ALL_CPUS $INPUT $GDAL_OUT -of COG -co COMPRESS=LZW -co OVERVIEWS=AUTO -r bilinear")
+        "gdal_translate --config GDAL_NUM_THREADS ALL_CPUS $INPUT $GDAL_OUT -of COG -co COMPRESS=LZW -co OVERVIEWS=AUTO -co OVERVIEW_RESAMPLING=BILINEAR")
     MLX_AVG_BIL=$(bench_tool "mlx bilinear" \
         "$REPO_ROOT/build/mlx_translate $INPUT $MLX_OUT -r BILINEAR")
     rm -f "$GDAL_OUT" "$MLX_OUT"
