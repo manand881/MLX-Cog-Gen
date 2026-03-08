@@ -120,6 +120,10 @@ Tested on an M1 Pro (16 GB), 5 runs per method. Rasters are Float32 single-band 
 
 † 2 of 5 runs excluded (machine sleep caused 691s and 842s outliers); average computed from 3 valid runs.
 
+| AVERAGE | BILINEAR |
+|---|---|
+| ![AVERAGE performance](docs/performance_average_log.png) | ![BILINEAR performance](docs/performance_bilinear_log.png) |
+
 MLX beats GDAL nT starting at dem_20cm (128 MB) and wins by **2.56×** (AVERAGE) and **2.52×** (BILINEAR) at dem_5cm (~60k×58k pixels). MLX is slower than GDAL nT at raster sizes below ~128 MB where Metal kernel launch overhead dominates over GPU compute time. MLX average and MLX bilinear run in nearly identical time since the GPU parallelises both uniformly.
 
 ## Roadmap
