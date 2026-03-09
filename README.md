@@ -100,31 +100,33 @@ Tested on an M1 Pro (16 GB), 5 runs per method. Rasters are Float32 single-band 
 
 | Raster | Dimensions | File size | GDAL 1T | GDAL nT | MLX | vs GDAL 1T | vs GDAL nT |
 |---|---|---|---|---|---|---|---|
-| dem_160cm | 1873×1817 | 4.6 MB | 0.345s | 0.248s | 0.326s | 1.06× faster | 1.31× slower |
-| dem_80cm | 3746×3634 | 14 MB | 0.793s | 0.396s | 0.499s | 1.59× faster | 1.26× slower |
-| dem_40cm | 7491×7268 | 39 MB | 2.341s | 0.876s | 1.014s | 2.31× faster | 1.16× slower |
-| dem_20cm | 14982×14536 | 128 MB | 7.974s | 2.778s | 2.671s | 2.98× faster | 1.04× faster |
-| dem_10cm | 29967×29074 | 323 MB | 29.814s | 9.519s | 5.947s | 5.01× faster | 1.60× faster |
-| dem_5cm | 59927×58141 | 928 MB | 113.549s | 35.896s† | 14.011s | 8.10× faster | 2.56× faster |
+| dem_160cm | 1873×1817 | 4.6 MB | 0.345s | 0.248s | 0.325s | 1.06× faster | 1.31× slower |
+| dem_80cm | 3746×3634 | 14 MB | 0.788s | 0.393s | 0.494s | 1.60× faster | 1.26× slower |
+| dem_40cm | 7491×7268 | 39 MB | 2.310s | 0.871s | 0.999s | 2.31× faster | 1.15× slower |
+| dem_20cm | 14982×14536 | 128 MB | 7.962s | 2.780s | 2.646s | 3.01× faster | 1.05× faster |
+| dem_10cm | 29967×29074 | 323 MB | 29.309s | 9.432s | 5.130s | 5.71× faster | 1.84× faster |
+| dem_5cm | 59927×58141 | 928 MB | 112.418s† | 35.555s | 13.012s | 8.64× faster | 2.73× faster |
 
 **BILINEAR**
 
 | Raster | Dimensions | File size | GDAL 1T | GDAL nT | MLX | vs GDAL 1T | vs GDAL nT |
 |---|---|---|---|---|---|---|---|
-| dem_160cm | 1873×1817 | 4.6 MB | 0.351s | 0.248s | 0.324s | 1.08× faster | 1.30× slower |
-| dem_80cm | 3746×3634 | 14 MB | 0.832s | 0.405s | 0.503s | 1.65× faster | 1.24× slower |
-| dem_40cm | 7491×7268 | 39 MB | 2.446s | 0.914s | 1.015s | 2.41× faster | 1.11× slower |
-| dem_20cm | 14982×14536 | 128 MB | 9.004s | 3.076s | 2.803s | 3.21× faster | 1.10× faster |
-| dem_10cm | 29967×29074 | 323 MB | 33.944s | 9.870s | 5.930s | 5.72× faster | 1.66× faster |
-| dem_5cm | 59927×58141 | 928 MB | 129.143s | 36.508s | 14.472s | 8.92× faster | 2.52× faster |
+| dem_160cm | 1873×1817 | 4.6 MB | 0.349s | 0.248s | 0.325s | 1.07× faster | 1.31× slower |
+| dem_80cm | 3746×3634 | 14 MB | 0.831s | 0.403s | 0.491s | 1.69× faster | 1.22× slower |
+| dem_40cm | 7491×7268 | 39 MB | 2.442s | 0.903s | 0.994s | 2.46× faster | 1.10× slower |
+| dem_20cm | 14982×14536 | 128 MB | 8.798s | 2.880s | 2.652s | 3.32× faster | 1.09× faster |
+| dem_10cm | 29967×29074 | 323 MB | 32.968s‡ | 9.815s | 4.979s | 6.62× faster | 1.97× faster |
+| dem_5cm | 59927×58141 | 928 MB | 126.848s | 36.882s‡ | 13.055s | 9.72× faster | 2.83× faster |
 
-† 2 of 5 runs excluded (machine sleep caused 691s and 842s outliers); average computed from 3 valid runs.
+† 1 of 5 runs excluded (144.8s outlier); average computed from 4 valid runs.
+
+‡ dem_10cm GDAL 1T: 1 of 5 runs excluded (293.9s outlier), average from 4 valid runs. dem_5cm GDAL nT: 1 of 5 runs excluded (57.4s outlier), average from 4 valid runs.
 
 | AVERAGE | BILINEAR |
 |---|---|
 | ![AVERAGE performance](docs/performance_average_log.png) | ![BILINEAR performance](docs/performance_bilinear_log.png) |
 
-MLX beats GDAL nT starting at dem_20cm (128 MB) and wins by **2.56×** (AVERAGE) and **2.52×** (BILINEAR) at dem_5cm (~60k×58k pixels). MLX is slower than GDAL nT at raster sizes below ~128 MB where Metal kernel launch overhead dominates over GPU compute time. MLX average and MLX bilinear run in nearly identical time since the GPU parallelises both uniformly.
+MLX beats GDAL nT starting at dem_20cm (128 MB) and wins by **2.73×** (AVERAGE) and **2.83×** (BILINEAR) at dem_5cm (~60k×58k pixels). MLX is slower than GDAL nT at raster sizes below ~128 MB where Metal kernel launch overhead dominates over GPU compute time. MLX average and MLX bilinear run in nearly identical time since the GPU parallelises both uniformly.
 
 ## Roadmap
 

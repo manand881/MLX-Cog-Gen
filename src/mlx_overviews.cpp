@@ -192,7 +192,16 @@ CPLErr MLXBuildOverviews(GDALDataset *poDS, int nBands,
         if (nOvrCount == 0)
             continue;
 
-        // Read full band as float32
+        // Read NoData value for this band
+        int hasNodata = 0;
+        double nodataDouble = poBand->GetNoDataValue(&hasNodata);
+        float nodataVal = static_cast<float>(nodataDouble);
+
+        // Read full band as float32 into a temporary CPU buffer, then copy
+        // into an MLX array. The mx::array iterator constructor (array.h:
+        // init()) calls allocator::malloc + std::copy unconditionally, so
+        // bandData is no longer needed once the constructor returns. Swap it
+        // with an empty vector to release the memory before pyramid computation.
         std::vector<float> bandData(static_cast<size_t>(W) * H);
         CPLErr eErr = poBand->RasterIO(GF_Read, 0, 0, W, H, bandData.data(),
                                        W, H, GDT_Float32, 0, 0);
@@ -203,16 +212,8 @@ CPLErr MLXBuildOverviews(GDALDataset *poDS, int nBands,
                      panBandList[iBand]);
             return eErr;
         }
-
-        // Read NoData value for this band
-        int hasNodata = 0;
-        double nodataDouble = poBand->GetNoDataValue(&hasNodata);
-        float nodataVal = static_cast<float>(nodataDouble);
-
-        // Load into MLX array on GPU
-        mx::array current =
-            mx::array(bandData.data(), {H, W}, mx::float32);
-        mx::eval(current);
+        mx::array current = mx::array(bandData.data(), {H, W}, mx::float32);
+        std::vector<float>().swap(bandData); // copy done; release CPU buffer now
 
         // Iteratively downsample each overview level from the previous level
         for (int iOvr = 0; iOvr < nOvrCount; iOvr++)
