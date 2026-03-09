@@ -86,12 +86,12 @@ static void checkStats(const char *label, Stats gdal, Stats mlx, float pct)
 
 // Check overview count matches and file sizes are within 5% of each other.
 // Overview dimensions intentionally differ by up to 1px per level (MLX uses
-// ceil(N/2), GDAL COG driver uses floor(N/2)) — count must match exactly.
+// ceil(N/2), GDAL COG driver uses floor(N/2)); count must match exactly.
 static void checkStructure(GDALDataset *poGDAL, GDALDataset *poMLX,
                             const char *gdalPath, const char *mlxPath,
                             const char *methodLabel)
 {
-    printf("  [structure — %s]\n", methodLabel);
+    printf("  [structure - %s]\n", methodLabel);
 
     // --- Overview count ---
     int gdalCount = poGDAL->GetRasterBand(1)->GetOverviewCount();

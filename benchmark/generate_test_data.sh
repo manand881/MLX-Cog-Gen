@@ -70,7 +70,7 @@ for i in "${!LABELS[@]}"; do
     echo "--- GSD: $label ($gsd deg) ---"
 
     if [ -f "$output" ]; then
-        echo "  Skipping — $output already exists"
+        echo "  Skipping: $output already exists"
         continue
     fi
 

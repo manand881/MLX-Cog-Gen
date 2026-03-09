@@ -18,7 +18,7 @@ namespace mx = mlx::core;
  *   - Matches GDAL's AVERAGE resampling behaviour at NoData boundaries.
  *
  * Odd dimensions: the last row/column is replicated before averaging so that
- * edge pixels average with themselves — matching GDAL's ceil(N/2) convention.
+ * edge pixels average with themselves, matching GDAL's ceil(N/2) convention.
  */
 static mx::array mlx_downsample_average(const mx::array &input, int targetH,
                                         int targetW, float nodataVal,
@@ -45,35 +45,38 @@ static mx::array mlx_downsample_average(const mx::array &input, int targetH,
 
     if (!hasNodata)
     {
-        // No NoData — simple reshape and mean
+        // No NoData: simple reshape and mean
         mx::array reshaped = mx::reshape(padded, {targetH, 2, targetW, 2});
         return mx::mean(reshaped, std::vector<int>{1, 3});
     }
 
-    // Build a valid-pixel mask (1.0 where data is valid, 0.0 where NoData)
+    // Build a bool mask (true where data is valid, false where NoData).
+    // Kept as bool (1 byte/pixel) rather than float32 to reduce memory bandwidth.
     mx::array nodataScalar = mx::array(nodataVal, mx::float32);
-    mx::array valid = mx::astype(
-        mx::logical_not(mx::equal(padded, nodataScalar)), mx::float32);
+    mx::array valid = mx::logical_not(mx::equal(padded, nodataScalar));
 
-    // Zero out NoData pixels so they don't contribute to the sum
-    mx::array zeroed = mx::multiply(padded, valid);
+    // Zero out NoData pixels via where, avoiding widening the mask to float32
+    mx::array zeroed = mx::where(valid, padded,
+                                 mx::zeros({padded.shape()[0], padded.shape()[1]},
+                                           mx::float32));
 
     // Reshape both data and mask to [targetH, 2, targetW, 2]
     mx::array dataR  = mx::reshape(zeroed, {targetH, 2, targetW, 2});
     mx::array validR = mx::reshape(valid,  {targetH, 2, targetW, 2});
 
     // Sum valid data and count valid pixels per 2x2 block
-    mx::array dataSum   = mx::sum(dataR,  std::vector<int>{1, 3});
+    mx::array dataSum    = mx::sum(dataR,  std::vector<int>{1, 3});
     mx::array validCount = mx::sum(validR, std::vector<int>{1, 3});
 
     // Average = sum / count, guarding against divide-by-zero
-    mx::array ones = mx::ones({targetH, targetW}, mx::float32);
-    mx::array safeDenom = mx::maximum(validCount, ones);
-    mx::array avg = mx::divide(dataSum, safeDenom);
+    mx::array validCountF = mx::astype(validCount, mx::float32);
+    mx::array ones        = mx::ones({targetH, targetW}, mx::float32);
+    mx::array safeDenom   = mx::maximum(validCountF, ones);
+    mx::array avg         = mx::divide(dataSum, safeDenom);
 
     // Where all pixels were NoData, write NoData
-    mx::array zeros = mx::zeros({targetH, targetW}, mx::float32);
-    mx::array allNodata = mx::equal(validCount, zeros);
+    mx::array allNodata  = mx::equal(validCountF,
+                                     mx::zeros({targetH, targetW}, mx::float32));
     mx::array nodataFill = mx::full({targetH, targetW}, nodataVal, mx::float32);
 
     return mx::where(allNodata, nodataFill, avg);
@@ -93,7 +96,7 @@ static mx::array mlx_downsample_average(const mx::array &input, int targetH,
  *
  * Boundary clamping: odd dimensions are padded by replicating the last
  * row/column before either pass, so the last output pixel at x = 2*(W-1)+0.5
- * sees source pixel W-1 twice, giving it weight 1.0 — matching GDAL's
+ * sees source pixel W-1 twice, giving it weight 1.0, matching GDAL's
  * behaviour of clamping the kernel to the valid source extent.
  *
  * For the no-NoData path this is implemented as two separable reshape+mean
@@ -147,14 +150,16 @@ static mx::array mlx_downsample_bilinear(const mx::array &input, int targetH,
                         std::vector<int>{1});
     }
 
-    // NoData path: 2D masked weighted sum — matches GDAL's 2D weight
+    // NoData path: 2D masked weighted sum, matching GDAL's 2D weight
     // accumulation in GDALResampleChunk_ConvolutionT more closely than a
     // separable masked pass would.
+    // Mask kept as bool (1 byte/pixel) to reduce memory bandwidth.
     mx::array nodataScalar = mx::array(nodataVal, mx::float32);
-    mx::array valid = mx::astype(
-        mx::logical_not(mx::equal(padded, nodataScalar)), mx::float32);
+    mx::array valid = mx::logical_not(mx::equal(padded, nodataScalar));
 
-    mx::array zeroed = mx::multiply(padded, valid);
+    mx::array zeroed = mx::where(valid, padded,
+                                 mx::zeros({padded.shape()[0], padded.shape()[1]},
+                                           mx::float32));
 
     mx::array dataR  = mx::reshape(zeroed, {targetH, 2, targetW, 2});
     mx::array validR = mx::reshape(valid,  {targetH, 2, targetW, 2});
@@ -162,12 +167,13 @@ static mx::array mlx_downsample_bilinear(const mx::array &input, int targetH,
     mx::array dataSum    = mx::sum(dataR,  std::vector<int>{1, 3});
     mx::array validCount = mx::sum(validR, std::vector<int>{1, 3});
 
-    mx::array ones      = mx::ones({targetH, targetW}, mx::float32);
-    mx::array safeDenom = mx::maximum(validCount, ones);
-    mx::array result    = mx::divide(dataSum, safeDenom);
+    mx::array validCountF = mx::astype(validCount, mx::float32);
+    mx::array ones        = mx::ones({targetH, targetW}, mx::float32);
+    mx::array safeDenom   = mx::maximum(validCountF, ones);
+    mx::array result      = mx::divide(dataSum, safeDenom);
 
-    mx::array zeros     = mx::zeros({targetH, targetW}, mx::float32);
-    mx::array allNodata = mx::equal(validCount, zeros);
+    mx::array allNodata  = mx::equal(validCountF,
+                                     mx::zeros({targetH, targetW}, mx::float32));
     mx::array nodataFill = mx::full({targetH, targetW}, nodataVal, mx::float32);
 
     return mx::where(allNodata, nodataFill, result);
@@ -222,7 +228,7 @@ CPLErr MLXBuildOverviews(GDALDataset *poDS, int nBands,
             mx::eval(downsampled);
 
             // Write result directly from MLX unified memory into the overview
-            // band — no intermediate copy needed since eval() has completed.
+            // band. No intermediate copy is needed since eval() has completed.
             eErr = poOvr->RasterIO(GF_Write, 0, 0, oW, oH,
                                    const_cast<float *>(downsampled.data<float>()),
                                    oW, oH, GDT_Float32, 0, 0);

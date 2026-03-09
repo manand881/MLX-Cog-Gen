@@ -79,7 +79,7 @@ static void testDimensions(int W, int H, int nOvrLevels)
         }
     }
 
-    fprintf(stdout, "[PASS] Input %dx%d — %d overview level(s) correct\n",
+    fprintf(stdout, "[PASS] Input %dx%d: %d overview level(s) correct\n",
             W, H, nOvrLevels);
 
     GDALClose(poDS);
@@ -110,7 +110,7 @@ int main()
     // Multi-level odd
     testDimensions(1025, 1025, 3);
 
-    // Realistic — matches sample_dem.tif dimensions
+    // Realistic: matches sample_dem.tif dimensions
     testDimensions(4772, 5125, 4);
 
     fprintf(stdout, "=== All dimension tests passed ===\n");

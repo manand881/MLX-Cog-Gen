@@ -53,7 +53,7 @@ void test_downsample()
         mx::float32
     );
 
-    // Reshape into 2x2 blocks and average — basic box filter downsample
+    // Reshape into 2x2 blocks and average (basic box filter downsample)
     mx::array reshaped = mx::reshape(tile, {1, 2, 2, 2, 2, 1});
     mx::array downsampled = mx::mean(reshaped, std::vector<int>{2, 4});
     downsampled = mx::reshape(downsampled, {1, 2, 2, 1});

@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(GDAL REQUIRED)
 find_package(MLX REQUIRED)
 
-# Shared library of MLX overview logic — used by mlx_translate and tests
+# Shared library of MLX overview logic, used by mlx_translate and tests
 add_library(mlx_overviews STATIC
     src/mlx_overviews.cpp
 )
@@ -22,7 +22,7 @@ target_link_libraries(mlx_overviews PUBLIC
     mlx
 )
 
-# mlx_translate — COG generator with MLX-accelerated overview generation
+# mlx_translate: COG generator with MLX-accelerated overview generation
 add_executable(mlx_translate
     src/mlx_translate.cpp
 )

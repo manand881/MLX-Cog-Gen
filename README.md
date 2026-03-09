@@ -75,7 +75,7 @@ Three test suites run via `ctest`:
 
 - `test_mlx`: verifies MLX install, GPU device access, and basic array ops
 - `test_overview_dims`: verifies overview dimensions match GDAL's `ceil(N/2)` convention across even/odd/multi-level inputs
-- `test_cog_stats`: runs both GDAL and MLX COG generation on a real DEM and checks that raster stats are within 5% at every overview level
+- `test_cog_stats`: runs both GDAL and MLX COG generation on a real DEM and checks that overview count matches exactly, file sizes are within 5%, and raster stats (min, max, mean, stddev) are within 5% at every overview level
 
 ## Usage
 

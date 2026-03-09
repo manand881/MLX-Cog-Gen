@@ -95,12 +95,19 @@ int main(int argc, char *argv[])
     fprintf(stderr, "Input: %s (%dx%d, %d band(s))\n",
             inputPath, srcW, srcH, nBands);
 
-    // Create in-memory temp GTiff copy
+    // Create in-memory temp GTiff copy.
+    // Forward BIGTIFF if the user requested it, so the temp file doesn't hit
+    // the 4 GB classic-TIFF limit before overviews are written.
     const char *tmpPath = "/vsimem/mlx_translate_tmp.tif";
     GDALDriver *poTiffDriver =
         GetGDALDriverManager()->GetDriverByName("GTiff");
+    char **papszTmpOptions = nullptr;
+    const char *pszBigTiff = CSLFetchNameValue(papszCOOptions, "BIGTIFF");
+    if (pszBigTiff)
+        papszTmpOptions = CSLSetNameValue(papszTmpOptions, "BIGTIFF", pszBigTiff);
     GDALDataset *poTmpDS = poTiffDriver->CreateCopy(
-        tmpPath, poSrcDS, FALSE, nullptr, nullptr, nullptr);
+        tmpPath, poSrcDS, FALSE, papszTmpOptions, nullptr, nullptr);
+    CSLDestroy(papszTmpOptions);
     if (!poTmpDS)
     {
         fprintf(stderr, "Failed to create temp dataset\n");
@@ -125,7 +132,7 @@ int main(int argc, char *argv[])
 
         // Step 1: Call GDAL BuildOverviews with "NONE" to allocate overview
         // band structure without any CPU resampling. "NONE" is handled in
-        // GDALRegenerateOverviewsEx() (overview.cpp) as an immediate return —
+        // GDALRegenerateOverviewsEx() (overview.cpp) as an immediate return:
         // the TIFF IFDs are created but no pixel data is computed.
         // MLX overwrites the slots in step 2.
         CPLErr eErr = poTmpDS->BuildOverviews(

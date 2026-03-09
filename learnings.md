@@ -69,30 +69,30 @@
 - `gdal_translate` reads from disk, but macOS's OS page cache keeps the file in RAM after the first read; subsequent runs confirm no disk variance
 - Cannot compare speedup ratios across different benchmark sessions; system state, memory pressure, and page cache warmth all vary; only absolute times within the same session are meaningful
 
-### GDAL performance flags — the full map
+### GDAL performance flags: the full map
 
 `gdal_translate -of COG` performance is controlled by more than just `GDAL_NUM_THREADS`. The benchmark currently only controls threading. The following flags can all shift GDAL wall-clock time and must be understood before drawing conclusions about what "maximum credible GDAL" looks like.
 
 **Threading (currently benchmarked)**
-- `GDAL_NUM_THREADS` (`--config`) — default `1`. Parallelises **both** overview downsampling computation **and** LZW/DEFLATE tile compression. `ALL_CPUS` enables all cores. Supported since GDAL 3.2 for overview generation; LZW compression also benefits. This is the single largest lever.
-- `NUM_THREADS` (`-co`) — COG-driver-specific form of the same control. Canonical for COG creation. Both `--config GDAL_NUM_THREADS` and `-co NUM_THREADS` are respected; in benchmarks we use the `--config` form.
+- `GDAL_NUM_THREADS` (`--config`): default `1`. Parallelises **both** overview downsampling computation **and** LZW/DEFLATE tile compression. `ALL_CPUS` enables all cores. Supported since GDAL 3.2 for overview generation; LZW compression also benefits. This is the single largest lever.
+- `NUM_THREADS` (`-co`): COG-driver-specific form of the same control. Canonical for COG creation. Both `--config GDAL_NUM_THREADS` and `-co NUM_THREADS` are respected; in benchmarks we use the `--config` form.
 
 **Memory and block cache (not currently benchmarked)**
-- `GDAL_CACHEMAX` (`--config`) — default 5% of RAM (~800MB on 16GB). Controls how many decoded source blocks GDAL keeps in RAM during overview generation. At large raster sizes, a small cache causes blocks to be evicted and re-read for each successive overview level. Setting `4096MB` or higher could measurably reduce I/O during multi-level overview generation.
-- `GDAL_SWATH_SIZE` (`--config`) — defaults to `GDAL_CACHEMAX / 4`. Controls the in-flight transfer buffer when GDAL copies pixels between datasets (used during the final COG assembly step). Automatically scales with GDAL_CACHEMAX.
-- `GDAL_BAND_BLOCK_CACHE` (`--config`) — default `AUTO`. `ARRAY` mode is faster for typical rasters (direct array indexing vs. hash lookup). AUTO chooses based on block count and usually picks ARRAY.
-- `VSI_CACHE` (`--config`) — default `FALSE`. Set to `TRUE` to add a per-file-handle RAM read-ahead cache on top of the OS page cache. Useful when the same source blocks are read repeatedly across overview levels.
-- `VSI_CACHE_SIZE` (`--config`) — default 25MB. Size of per-file VSI cache. Only effective when `VSI_CACHE=TRUE`.
+- `GDAL_CACHEMAX` (`--config`): default 5% of RAM (~800MB on 16GB). Controls how many decoded source blocks GDAL keeps in RAM during overview generation. At large raster sizes, a small cache causes blocks to be evicted and re-read for each successive overview level. Setting `4096MB` or higher could measurably reduce I/O during multi-level overview generation.
+- `GDAL_SWATH_SIZE` (`--config`): defaults to `GDAL_CACHEMAX / 4`. Controls the in-flight transfer buffer when GDAL copies pixels between datasets (used during the final COG assembly step). Automatically scales with GDAL_CACHEMAX.
+- `GDAL_BAND_BLOCK_CACHE` (`--config`): default `AUTO`. `ARRAY` mode is faster for typical rasters (direct array indexing vs. hash lookup). AUTO chooses based on block count and usually picks ARRAY.
+- `VSI_CACHE` (`--config`): default `FALSE`. Set to `TRUE` to add a per-file-handle RAM read-ahead cache on top of the OS page cache. Useful when the same source blocks are read repeatedly across overview levels.
+- `VSI_CACHE_SIZE` (`--config`): default 25MB. Size of per-file VSI cache. Only effective when `VSI_CACHE=TRUE`.
 
 **Compression (not currently benchmarked)**
-- `PREDICTOR` (`-co`) — default `NO` (= 1, no predictor). Setting `2` (horizontal differencing) before LZW reduces input entropy so the compressor does less work. Standard recommendation for integer DEM data; can improve LZW speed by 10–30% while also improving compression ratio. Setting `3` (floating-point differencing) is appropriate for Float32 data. LZW has no configurable level; PREDICTOR is the only way to tune LZW performance.
-- `LEVEL` (`-co`) — controls effort for DEFLATE (1–12, default 6) and ZSTD (1–22, default 9). Level 1 is maximally fast. Has no effect on LZW.
-- `OVERVIEW_COMPRESS` / `OVERVIEW_PREDICTOR` (`-co`) — same controls applied independently to overview tiles.
+- `PREDICTOR` (`-co`): default `NO` (= 1, no predictor). Setting `2` (horizontal differencing) before LZW reduces input entropy so the compressor does less work. Standard recommendation for integer DEM data; can improve LZW speed by 10–30% while also improving compression ratio. Setting `3` (floating-point differencing) is appropriate for Float32 data. LZW has no configurable level; PREDICTOR is the only way to tune LZW performance.
+- `LEVEL` (`-co`): controls effort for DEFLATE (1–12, default 6) and ZSTD (1–22, default 9). Level 1 is maximally fast. Has no effect on LZW.
+- `OVERVIEW_COMPRESS` / `OVERVIEW_PREDICTOR` (`-co`): same controls applied independently to overview tiles.
 
 **I/O path (minor, situational)**
-- `GTIFF_VIRTUAL_MEM_IO` (`--config`) — default `NO`. Set to `YES` or `IF_ENOUGH_RAM` to use `mmap()` instead of GDAL's block cache for reading uncompressed source TIFFs. Can reduce source-read time on large uncompressed inputs by delegating memory management to the OS. No effect on compressed sources.
-- `GTIFF_DIRECT_IO` (`--config`) — default `NO`. Bypasses block cache for uncompressed TIFF reads. Lower priority than `GTIFF_VIRTUAL_MEM_IO`; only effective when mmap is not in use.
-- `GDAL_DISABLE_READDIR_ON_OPEN` (`--config`) — default `FALSE`. Set to `EMPTY_DIR` to skip scanning the source directory for `.aux`/`.ovr`/`.tfw` sidecar files on every `GDALOpen()`. Eliminates a `readdir` syscall per benchmark iteration.
+- `GTIFF_VIRTUAL_MEM_IO` (`--config`): default `NO`. Set to `YES` or `IF_ENOUGH_RAM` to use `mmap()` instead of GDAL's block cache for reading uncompressed source TIFFs. Can reduce source-read time on large uncompressed inputs by delegating memory management to the OS. No effect on compressed sources.
+- `GTIFF_DIRECT_IO` (`--config`): default `NO`. Bypasses block cache for uncompressed TIFF reads. Lower priority than `GTIFF_VIRTUAL_MEM_IO`; only effective when mmap is not in use.
+- `GDAL_DISABLE_READDIR_ON_OPEN` (`--config`): default `FALSE`. Set to `EMPTY_DIR` to skip scanning the source directory for `.aux`/`.ovr`/`.tfw` sidecar files on every `GDALOpen()`. Eliminates a `readdir` syscall per benchmark iteration.
 
 **What the benchmark currently covers vs. does not cover**
 - Covered: `GDAL_NUM_THREADS` = 1 and `ALL_CPUS`; `COMPRESS=LZW`; `OVERVIEWS=AUTO`; default tile size (512)
@@ -119,8 +119,27 @@
 - Replaced the single fixed test file with dynamically generated DEMs at multiple GSDs (80cm, 40cm, 20cm) so benchmarks capture how speedup scales with raster size
 - DEMs are generated from 5k random points via TIN interpolation (`gdal_grid -a linear`); synthetic but realistic Float32 single-band rasters with NoData outside the convex hull
 - **Project goal: beat GDAL ALL_CPUS (nT), not single-threaded GDAL.** Single-threaded GDAL is not a meaningful target; any real user will invoke GDAL with `GDAL_NUM_THREADS=ALL_CPUS`. The relevant speedup column is vs GDAL nT.
-- **Current finding (vs GDAL ALL_CPUS):** MLX is slower at small-to-medium rasters and only crosses over at ~300 MB+. Latest benchmark (2026-03-08, M1 Pro 10-core, 16 GB): MLX beats GDAL nT at dem_10cm (323 MB, 1.39–1.44× faster) and dem_5cm (928 MB, 1.78–1.79× faster). MLX is slower than GDAL nT at everything below ~300 MB. At 20cm (128 MB): GDAL nT 3.0s, MLX 6.87s — MLX is 2.28× slower. Optimising the small-raster regime is the primary open problem.
+- MLX is slower than GDAL nT at small rasters where Metal kernel launch overhead dominates over GPU compute time; it wins at large rasters where GPU parallelism overwhelms CPU core count. The crossover point shifts with optimisations (see README for current numbers).
+- Optimising the small-raster regime is the primary open problem. The dominant fixed cost is Metal framework overhead (kernel launch, command buffer submission) plus GDAL I/O setup, not GPU compute time.
 - A single-raster benchmark at one scale is misleading; behaviour must be measured across raster sizes
+
+### Batched eval experiment (2026-03-09): no improvement
+
+Previously `MLXBuildOverviews` called `mx::eval()` after every overview level (N syncs per band). We refactored to build the full downsample chain as a lazy graph and call `mx::eval(all_levels)` once. Result on dem_160cm/80cm/40cm: **no measurable improvement** (differences within 5ms, inside run-to-run noise). Conclusion: MLX's lazy evaluator already schedules intra-eval ops efficiently; the per-level `eval()` fence was not causing meaningful CPU/GPU round-trip stalls at these sizes. At small rasters the GPU completes each level near-instantly so the sync cost is negligible. At large rasters the bottleneck is memory bandwidth (~200 GB/s, a hardware constant) and batching the graph doesn't change total bytes moved. The code change is kept (cleaner structure: one eval, one write loop) but carries no performance benefit.
+
+### Where performance is still left on the table
+
+**Easy wins:**
+- **ZSTD default instead of LZW**: ZSTD compresses 2–3× faster than LZW at similar ratio; supported since GDAL 2.3. One-line default change. Directly reduces COG write time, which is the second-largest cost at large rasters.
+- **PREDICTOR=3 for Float32**: reduces LZW/DEFLATE input entropy before compression. Standard for Float32 rasters. One creation-option change. Makes compression faster AND improves ratio.
+
+**Medium effort:**
+- **Eliminate the /vsimem double-pass**: currently the pipeline writes all overview data into /vsimem, then the COG driver reads it all back to tile+compress. Every pixel (full-res + overviews ≈ 4/3 × band size) is touched twice for the write path alone. Eliminating this requires structuring the pipeline so the COG driver reads directly from the MLX output without an intermediate GTiff copy.
+- **Multi-band GPU parallelism**: bands are processed serially. For multi-band rasters (RGB, multispectral), all bands could be batched as a `[bands, H, W]` array and downsampled simultaneously. No benefit for single-band DEMs (current test data).
+
+**Large effort / diminishing returns:**
+- **GPU-accelerated tiling**: the COG write step tiles into 512×512 blocks and reorders them (pure data movement that the GPU could do faster). But using GPU-tiled output requires implementing the TIFF/COG file structure (IFDs, tile offsets) manually, essentially replacing the COG driver.
+- **Direct read into MLX buffer**: `RasterIO` fills a `std::vector<float>`, which MLX then references (or copies from). On Apple Silicon with unified memory, GDAL could write directly into an MLX-owned buffer. Requires either MLX exposing a writable raw pointer before eval, or using a custom GDAL RasterIO destination. Minor win: at large rasters this extra allocation is small relative to total memory traffic.
 
 ### gdal_grid notes
 
@@ -129,9 +148,9 @@
 - GSD can be expressed in degrees when working in WGS84; no need to reproject to a metric CRS just for raster generation; convert from metres using `1 deg lat approx 111,320 m`
 - Generation time scales roughly with output pixel count: 5k points over a ~3km×3km area at 20cm GSD (~15k×15k pixels) takes ~11 minutes on M1 Pro single-threaded; ~6 minutes with `--config GDAL_NUM_THREADS ALL_CPUS`
 - `gdal_grid` does not accept `-multi`; multithreading is enabled via `--config GDAL_NUM_THREADS ALL_CPUS` passed as the first argument. Uniform point distributions benefit most since all threads get equal work.
-- OGR VRT is the correct way to make a CSV readable as a spatial layer by GDAL tools — specify `GeometryType`, `LayerSRS`, and `GeometryField` with `encoding="PointFromColumns"`
+- OGR VRT is the correct way to make a CSV readable as a spatial layer by GDAL tools; specify `GeometryType`, `LayerSRS`, and `GeometryField` with `encoding="PointFromColumns"`
 
 ### Bash compatibility
 
-- macOS ships with bash 3.2 — `mapfile` is not available; use `while IFS= read -r f; do arr+=("$f"); done < <(...)` instead
+- macOS ships with bash 3.2, so `mapfile` is not available; use `while IFS= read -r f; do arr+=("$f"); done < <(...)` instead
 - Separate stdout and stderr in bench functions (`>&2` for progress, plain `echo` for the return value) to cleanly capture averages via command substitution

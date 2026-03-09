@@ -87,7 +87,7 @@ echo "Found ${#RASTERS[@]} raster(s) to benchmark:"
 for r in "${RASTERS[@]}"; do echo "  $r"; done
 
 # ---------------------------------------------------------------------------
-# Warmup — run mlx_translate once on the smallest raster before any timing.
+# Warmup: run mlx_translate once on the smallest raster before any timing.
 # This initialises the MLX runtime, loads mlx.metallib into GPU memory, and
 # creates the Metal command queue so none of that one-time cost appears in
 # the timed runs.
@@ -174,5 +174,5 @@ print_table() {
     echo "=================================================================="
 }
 
-print_table "Results — AVERAGE"  "${ROWS_AVERAGE[@]}"
-print_table "Results — BILINEAR" "${ROWS_BILINEAR[@]}"
+print_table "Results: AVERAGE"  "${ROWS_AVERAGE[@]}"
+print_table "Results: BILINEAR" "${ROWS_BILINEAR[@]}"
