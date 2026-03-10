@@ -92,6 +92,23 @@ int main(int argc, char *argv[])
     int nBands = poSrcDS->GetRasterCount();
     int srcW = poSrcDS->GetRasterXSize();
     int srcH = poSrcDS->GetRasterYSize();
+
+    // Validate data type: only Float32 is supported
+    for (int i = 1; i <= nBands; i++)
+    {
+        GDALDataType dt = poSrcDS->GetRasterBand(i)->GetRasterDataType();
+        if (dt != GDT_Float32)
+        {
+            fprintf(stderr,
+                    "Error: band %d has data type %s. "
+                    "Only Float32 is supported.\n",
+                    i, GDALGetDataTypeName(dt));
+            GDALClose(poSrcDS);
+            CSLDestroy(papszCOOptions);
+            return 1;
+        }
+    }
+
     fprintf(stderr, "Input: %s (%dx%d, %d band(s))\n",
             inputPath, srcW, srcH, nBands);
 

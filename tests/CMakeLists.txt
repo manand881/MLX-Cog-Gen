@@ -15,3 +15,10 @@ add_executable(test_float16 test_float16.cpp)
 target_link_libraries(test_float16 PRIVATE mlx_overviews)
 add_test(NAME test_float16 COMMAND test_float16
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_executable(test_dtype_rejection test_dtype_rejection.cpp)
+target_link_libraries(test_dtype_rejection PRIVATE ${GDAL_LIBRARIES})
+target_include_directories(test_dtype_rejection PRIVATE ${GDAL_INCLUDE_DIRS})
+target_compile_definitions(test_dtype_rejection PRIVATE
+    MLX_TRANSLATE_BIN="$<TARGET_FILE:mlx_translate>")
+add_test(NAME test_dtype_rejection COMMAND test_dtype_rejection)
