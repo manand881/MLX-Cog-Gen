@@ -125,10 +125,10 @@ int main(int argc, char *argv[])
     GDALDataset *poTmpDS = poTiffDriver->CreateCopy(
         tmpPath, poSrcDS, FALSE, papszTmpOptions, nullptr, nullptr);
     CSLDestroy(papszTmpOptions);
+    GDALClose(poSrcDS); // all data copied; release source immediately
     if (!poTmpDS)
     {
         fprintf(stderr, "Failed to create temp dataset\n");
-        GDALClose(poSrcDS);
         CSLDestroy(papszCOOptions);
         return 1;
     }
@@ -159,7 +159,6 @@ int main(int argc, char *argv[])
         {
             fprintf(stderr, "Failed to allocate overview structure\n");
             GDALClose(poTmpDS);
-            GDALClose(poSrcDS);
             CSLDestroy(papszCOOptions);
             return 1;
         }
@@ -175,7 +174,6 @@ int main(int argc, char *argv[])
         {
             fprintf(stderr, "MLX overview generation failed\n");
             GDALClose(poTmpDS);
-            GDALClose(poSrcDS);
             CSLDestroy(papszCOOptions);
             return 1;
         }
@@ -191,7 +189,6 @@ int main(int argc, char *argv[])
     {
         fprintf(stderr, "COG driver not available\n");
         GDALClose(poTmpDS);
-        GDALClose(poSrcDS);
         CSLDestroy(papszCOOptions);
         return 1;
     }
@@ -205,7 +202,6 @@ int main(int argc, char *argv[])
     {
         fprintf(stderr, "Failed to write COG output\n");
         GDALClose(poTmpDS);
-        GDALClose(poSrcDS);
         CSLDestroy(papszCOOptions);
         return 1;
     }
@@ -218,7 +214,6 @@ int main(int argc, char *argv[])
     // Cleanup
     GDALClose(poCOGDS);
     GDALClose(poTmpDS);
-    GDALClose(poSrcDS);
     GDALDeleteDataset(nullptr, tmpPath);
     CSLDestroy(papszCOOptions);
 
