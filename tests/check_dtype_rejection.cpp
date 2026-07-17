@@ -1,3 +1,21 @@
+// Check dtype rejection
+//
+// Agenda
+// ------
+// Run the mlx_translate CLI on synthetic single-band rasters of every common
+// GDAL dtype. Non-Float32 inputs must exit 1. Float32 must exit 0.
+//
+// Why it matters
+// --------------
+// The implementation is Float32-only on the GPU path. Accepting Byte/Int/Float16
+// silently would convert or mis-handle data and produce wrong COGs. This is the
+// CLI policy gate for that contract.
+//
+// Pass criteria
+// -------------
+// Exit code 1 for Byte, UInt16, Int16, Int32, Float16, Float64.
+// Exit code 0 for Float32.
+
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -46,8 +64,8 @@ int main()
     for (const auto &tc : badTypes)
     {
         char inPath[64], outPath[64];
-        snprintf(inPath,  sizeof(inPath),  "/tmp/test_dtype_%s.tif", tc.name);
-        snprintf(outPath, sizeof(outPath), "/tmp/test_dtype_%s_out.tif", tc.name);
+        snprintf(inPath,  sizeof(inPath),  "/tmp/check_dtype_%s.tif", tc.name);
+        snprintf(outPath, sizeof(outPath), "/tmp/check_dtype_%s_out.tif", tc.name);
 
         createRaster(inPath, tc.dt);
         int rc = runTranslate(inPath, outPath);
@@ -66,8 +84,8 @@ int main()
     }
 
     // --- Float32 must be accepted (exit 0) ---
-    const char *fp32In  = "/tmp/test_dtype_fp32.tif";
-    const char *fp32Out = "/tmp/test_dtype_fp32_out.tif";
+    const char *fp32In  = "/tmp/check_dtype_fp32.tif";
+    const char *fp32Out = "/tmp/check_dtype_fp32_out.tif";
     createRaster(fp32In, GDT_Float32);
     int rc = runTranslate(fp32In, fp32Out);
     int exitCode = WEXITSTATUS(rc);
@@ -81,6 +99,6 @@ int main()
     VSIUnlink(fp32In);
     VSIUnlink(fp32Out);
 
-    printf("\n=== dtype rejection tests passed ===\n");
+    printf("\n=== dtype rejection checks passed ===\n");
     return 0;
 }

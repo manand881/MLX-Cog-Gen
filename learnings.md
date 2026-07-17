@@ -32,7 +32,7 @@
 
 ## MLX API
 
-- MLX 0.31.0 available via `brew install mlx`, provides C++ API for GPU-accelerated array ops on Apple Silicon
+- MLX available via `brew install mlx` (verified 0.32.0 on 2026-07-17), provides C++ API for GPU-accelerated array ops on Apple Silicon
 - Use `mx::default_stream(device)` not `mx::Stream(device)` to get a stream for a device
 - `mx::mean()` requires `std::vector<int>` not an initializer list for axes
 - `mx::slice()` takes `Shape` (`SmallVector<int>`); use initializer lists `{start, ...}` not `std::vector<int>`
@@ -47,7 +47,7 @@
 - NEAREST is correct for **categorical data** (land cover classes, labels) where averaging would create meaningless blended values
 - AVERAGE is correct for **continuous data** (elevation, imagery, temperature). NEAREST can make narrow features (a ridge, a river) disappear entirely at coarser levels depending on pixel alignment
 - BILINEAR uses a separable tent filter: for each output pixel i, the sample point in source space is `(i + 0.5) * 2 - 0.5 = 2i + 0.5`, which lands halfway between source pixels 2i and 2i+1. The tent filter assigns weight 0.5 to each. Applied as two 1D passes (horizontal then vertical). For strict 2x downsampling with no NoData, this is numerically identical to AVERAGE because the 0.5/0.5 weights produce the same 2x2 mean. They diverge at NoData boundaries and for non-2x factors.
-- GDAL's bilinear overview generation goes through the convolution code path (`GDALResampleChunk_ConvolutionT`), which is a more general implementation than the AVERAGE path (`GDALResampleChunk_AverageOrRMS`). In current benchmark data (160cm–20cm) GDAL bilinear and average are within 0.2% of each other. Any divergence at larger raster sizes has not been verified with the current test data. MLX shows no difference between the two methods because the GPU parallelises both uniformly.
+- GDAL's bilinear overview generation goes through the convolution code path (`GDALResampleChunk_ConvolutionT`), which is a more general implementation than the AVERAGE path (`GDALResampleChunk_AverageOrRMS`). On multi-GSD benches (including dem_5cm), MLX AVERAGE and BILINEAR wall times stay nearly identical because the GPU parallelises both uniformly.
 - Our benchmark compares both tools using both AVERAGE and BILINEAR, each method run independently against its GDAL equivalent
 
 ## NoData Handling
@@ -56,7 +56,32 @@
 - Contamination compounds at each overview level because each level downsamples from the previous
 - Fix: mask NoData pixels before averaging; zero them out, sum valid pixels only, divide by valid count, output NoData where all 4 pixels in a block are NoData
 - Read NoData value per band via `poBand->GetNoDataValue(&hasNodata)`; always check the `hasNodata` flag before masking
-- **NaN no-data rejection (2026-04-15):** Added early check to reject datasets with NaN no-data values using `std::isnan()`. Returns `CE_Failure` with clear error message directing users to convert to numeric no-data (e.g., -9999). Prevents silent corruption that would occur because `mx::equal()` cannot detect NaN (NaN != NaN by IEEE 754). Verified by testing with a dataset containing NaN no-data - correctly rejected with error message.
+- **NaN no-data substitution (2026-04-15):** Implemented NaN substitution strategy instead of rejection. When NaN is detected as the nodata value, the implementation:
+  1. Detects NaN nodata using `std::isnan()` on the GDAL nodata value
+  2. Internally uses -9999 as the working nodata value for MLX operations
+  3. Substitutes NaN pixels with -9999 on CPU after RasterIO (before creating MLX array)
+  4. Performs all downsampling operations with -9999 as nodata
+  5. Restores -9999 back to NaN on CPU before writing to GDAL
+  6. Sets output band nodata metadata to NaN via `SetNoDataValue()`
+  This approach works around MLX's inability to detect NaN with `mx::equal()` while maintaining full compatibility with NaN nodata datasets. CPU-based substitution is used because MLX may not have `isnan()` support or it may cause segmentation faults.
+
+**Test results (live 2026-07-17):** `sample_dem_nan_nodata.tif` (4772x5125, NaN nodata). Dev = `|MLX − GDAL| / |GDAL|` on min/max/mean/stddev. Comparison is MLX (NaN→-9999 path) vs GDAL native NaN convolution, not GDAL-with--9999.
+
+| Method    | Level      | min dev | max dev | mean dev | stddev dev | Status |
+|-----------|------------|---------|---------|----------|------------|--------|
+| AVERAGE   | Full res   | 0.00%   | 0.00%   | 0.00%    | 0.00%      | PASS   |
+| AVERAGE   | Overview 1 | 0.02%   | 0.04%   | 0.00%    | 0.00%      | PASS   |
+| AVERAGE   | Overview 2 | 0.06%   | 0.02%   | 0.00%    | 0.00%      | PASS   |
+| AVERAGE   | Overview 3 | 0.10%   | 0.53%   | 0.00%    | 0.00%      | PASS   |
+| AVERAGE   | Overview 4 | 0.25%   | 1.05%   | 1.46%    | 0.00%      | PASS   |
+| BILINEAR  | Full res   | 0.00%   | 0.00%   | 0.00%    | 0.00%      | PASS   |
+| BILINEAR  | Overview 1 | 0.14%   | 0.14%   | 0.75%    | 0.00%      | PASS   |
+| BILINEAR  | Overview 2 | 0.41%   | 0.22%   | 1.47%    | 0.05%      | PASS   |
+| BILINEAR  | Overview 3 | 0.57%   | 0.02%   | 2.88%    | 0.10%      | PASS   |
+| BILINEAR  | Overview 4 | 1.52%   | 0.17%   | 1.42%    | 0.43%      | PASS   |
+
+- Worst AVERAGE: ~1.5% (mean @ ovr 4). Worst BILINEAR: ~2.9% (mean @ ovr 3).
+- Gates in `check_nan_nodata.cpp`: **5% AVERAGE and BILINEAR** (`AVG_TOLERANCE` / `BIL_TOLERANCE`). BILINEAR gate tightened from 15% → 5% on 2026-07-17 after live remeasure (old table had stale BILINEAR mean up to 16.81% and is obsolete).
 - **Float16 nodata quantization issue**: Float16 precision near 10000 is ±8 (exponent 13, 10-bit mantissa). `-9999` stored as Float16 rounds to `-10000.0`. The nodata metadata still says `-9999.0`. Both GDAL and our implementation compare the stored pixel value against the metadata value and find a mismatch; nodata pixels are silently treated as valid data. This is not specific to our code; GDAL has the same problem. Confirmed experimentally: GDAL overview min drops to -10560 (contamination from nodata averaging), while MLX min stays at -10000 (contamination present but bounded since all nodata pixels have the same quantised value). This is the same class of failure as nodata=0; any nodata value that cannot be exactly represented in Float16 triggers it.
 
 ## Benchmark
@@ -126,7 +151,9 @@
 
 ### Batched eval experiment (2026-03-09): no improvement
 
-Previously `MLXBuildOverviews` called `mx::eval()` after every overview level (N syncs per band). We refactored to build the full downsample chain as a lazy graph and call `mx::eval(all_levels)` once. Result on dem_160cm/80cm/40cm: **no measurable improvement** (differences within 5ms, inside run-to-run noise). Conclusion: MLX's lazy evaluator already schedules intra-eval ops efficiently; the per-level `eval()` fence was not causing meaningful CPU/GPU round-trip stalls at these sizes. At small rasters the GPU completes each level near-instantly so the sync cost is negligible. At large rasters the bottleneck is memory bandwidth (~200 GB/s, a hardware constant) and batching the graph doesn't change total bytes moved. The code change is kept (cleaner structure: one eval, one write loop) but carries no performance benefit.
+Tried building the full downsample chain as a lazy graph and calling `mx::eval(all_levels)` once instead of `mx::eval` per level. Result on dem_160cm/80cm/40cm: **no measurable improvement** (differences within 5ms, run-to-run noise). Conclusion: per-level `eval()` fences were not the bottleneck; memory bandwidth and Metal/GDAL fixed costs dominate.
+
+**Current code (2026-07-17):** still **per-level** `mx::eval(downsampled)` inside the overview loop in `MLXBuildOverviews` (needed before CPU NaN restore / RasterIO write). Batched-eval is historical only, not production structure.
 
 ### Where performance is still left on the table
 
@@ -140,7 +167,7 @@ Previously `MLXBuildOverviews` called `mx::eval()` after every overview level (N
 
 **Large effort / diminishing returns:**
 - **GPU-accelerated tiling**: the COG write step tiles into 512×512 blocks and reorders them (pure data movement that the GPU could do faster). But using GPU-tiled output requires implementing the TIFF/COG file structure (IFDs, tile offsets) manually, essentially replacing the COG driver.
-- **Direct read into MLX buffer**: `RasterIO` fills a `std::vector<float>`, which MLX then references (or copies from). On Apple Silicon with unified memory, GDAL could write directly into an MLX-owned buffer. Requires either MLX exposing a writable raw pointer before eval, or using a custom GDAL RasterIO destination. Minor win: at large rasters this extra allocation is small relative to total memory traffic.
+- **Avoid CPU copy on overview write**: read path already uses `mx::allocator::malloc` so RasterIO fills MLX-owned memory. Write path still copies into a `std::vector<float>` when restoring NaN nodata before RasterIO. Numeric-nodata could write from `downsampled.data<float>()` directly; NaN path needs the copy (or an in-place restore if MLX buffer is writable after eval).
 
 ### gdal_grid notes
 
@@ -160,7 +187,7 @@ Previously `MLXBuildOverviews` called `mx::eval()` after every overview level (N
 
 ### GDAL's Bilinear Implementation (GDALResampleChunk_ConvolutionT)
 
-Location: `gdal-src/gcore/overview.cpp:3360`
+Location: `gcore/overview.cpp` (`GDALResampleChunk_ConvolutionT`; line numbers shift by GDAL version)
 
 **Architecture:**
 - Two-pass separable convolution: horizontal filter first, then vertical filter
@@ -203,66 +230,34 @@ Location: `gdal-src/gcore/overview.cpp:3360`
 
 ### MLX's Bilinear Implementation (mlx_downsample_bilinear)
 
-Location: `src/mlx_overviews.cpp:120`
+Location: `src/mlx_overviews.cpp` (`mlx_downsample_bilinear`)
 
-**No-NoData path (lines 146-158):**
+**No-NoData path:**
 - Two-pass separable convolution using reshape+mean
-- Horizontal pass: reshape `[pH, pW] → [pH, targetW, 2]`, mean over axis 2 → `[pH, targetW]`
-  - This pairs adjacent columns and averages them with equal weights (0.5, 0.5)
-- Vertical pass: reshape `[pH, targetW] → [targetH, 2, targetW]`, mean over axis 1 → `[targetH, targetW]`
-  - This pairs adjacent rows and averages them with equal weights (0.5, 0.5)
-- **Mathematical equivalence to GDAL:** For 2x downsampling with no NoData, the tent filter at position `x = 0.5` gives weights `0.5, 0.5` to the two adjacent pixels. The reshape+mean approach applies exactly these weights. The two passes are independent, matching GDAL's separable convolution structure.
-- **Boundary handling:** Odd dimensions padded by replicating last row/column before either pass (lines 131-142). This simulates kernel clamping at the boundary.
+- Horizontal: reshape `[pH, pW] → [pH, targetW, 2]`, mean over axis 2
+- Vertical: reshape `[pH, targetW] → [targetH, 2, targetW]`, mean over axis 1
+- At 2x with no NoData, tent weights 0.5/0.5 match reshape+mean exactly
+- Odd dims: pad by replicating last row/col (simulates GDAL kernel clamp)
 
-**NoData path (lines 160-182):**
-- Uses 2D masked sum instead of separable passes
-- Reshape to `[targetH, 2, targetW, 2]` (full 2x2 blocks)
-- Zero out NoData pixels via `where(valid, padded, 0.0f)`
-- Sum valid data and count valid pixels per 2x2 block
-- Divide sum by count (guarded against divide-by-zero)
-- Output NoData where all 4 pixels are NoData
-- **Difference from GDAL:** This is a 2D box filter approach, not a separable convolution. The weights are uniform across the 2x2 block (all valid pixels contribute equally). GDAL's separable approach applies weights that are the product of 1D tent weights, which can differ at NoData boundaries.
+**NoData path (current, post 2026-04-15 fix):**
+- Separable masked convolution matching GDAL's `GDALResampleChunk_ConvolutionT`
+- Horizontal: reshape `[pH, targetW, 2]`, weight 0.5, mask, `dataSum/weightSum` if weightSum > 0 else 0; intermediate validity mask
+- Vertical: same on intermediate using intermediate mask; final 2D weights = product of 1D weights
+- Output NoData where no valid weight survived either pass
 
-### Key Differences
+### Historical: pre-fix 2D NoData path (obsolete)
 
-1. **NoData handling strategy:**
-   - **GDAL:** Separable masked convolution. Horizontal pass applies 1D tent weights with mask, produces intermediate mask. Vertical pass applies 1D tent weights to intermediate mask. Final 2D weights = product of 1D weights.
-   - **MLX:** 2D box filter with uniform weighting. All valid pixels in 2x2 block contribute equally. This is simpler but differs from GDAL at NoData boundaries where the separable weight distribution matters.
+Before 2026-04-15, the NoData path used a **2D box filter** (reshape to 2×2 blocks, uniform mean of valid pixels). That diverged from GDAL's separable tent product at nodata boundaries (example: single valid pixel in 2×2 got weight 1.0 in MLX vs 0.25 in GDAL; max abs error ~0.51 on a circular nodata test). That analysis and the "2D weighting" docs are **historical only**.
 
-2. **Boundary handling:**
-   - **GDAL:** Clamps kernel to valid source extent. For odd dimensions, the last output pixel sees the edge pixel with weight 1.0 (kernel truncated).
-   - **MLX:** Replicates last row/column before filtering. This achieves the same effect as clamping for the no-NoData case. For NoData case, the replication is done before the 2D masked sum.
+### Current key differences vs GDAL
 
-3. **Generality:**
-   - **GDAL:** Supports arbitrary downsample factors, arbitrary kernel radii, kernels with negative weights.
-   - **MLX:** Hardcoded for 2x downsampling only. This is acceptable for COG overviews which are always powers of 2.
+1. **NoData strategy:** both separable masked convolution (aligned after fix)
+2. **Boundary:** GDAL clamps kernel; MLX replicates last row/col (same effect for no-NoData 2x)
+3. **Generality:** GDAL arbitrary factors/kernels; MLX 2x only (enough for COG power-of-2 overviews)
+4. **No NoData, 2x:** mathematically equivalent
+5. **Residual divergence:** FP order (CPU vs GPU), 1px ceil/floor overview dim drift vs COG AUTO, and NaN-nodata vs GDAL native NaN path (see NaN table above)
 
-4. **Numerical equivalence (no NoData):**
-   - For 2x downsampling with no NoData, both implementations are mathematically identical. The tent filter at 0.5 offset gives 0.5/0.5 weights, which is exactly what reshape+mean computes. The separable structure matches.
-
-5. **Numerical divergence (with NoData):**
-   - At NoData boundaries, MLX's 2D uniform weighting differs from GDAL's separable tent weighting. This is documented in `docs/known-issues.md` as a "BILINEAR nodata boundary mismatch vs GDAL" with max absolute error of 0.51 at those locations.
-   - Example: Consider a 2x2 block where only pixel (0,0) is valid. GDAL's separable approach gives it weight `0.5 * 0.5 = 0.25`. MLX's 2D approach gives it weight `1.0 / 1.0 = 1.0`. The outputs differ.
-
-### Why MLX Uses 2D Weighting for NoData
-
-From the code comments (lines 160-162):
-> "For the NoData path a 2D masked sum is used to match GDAL's 2D weight accumulation (a separable NoData pass would over-weight pixels that partially survived the horizontal pass)."
-
-This is actually **incorrect** based on the GDAL code analysis. GDAL's NoData path IS separable - it uses `pabyChunkNodataMaskHorizontalFiltered` to carry the horizontal mask into the vertical pass. The final 2D weights ARE the product of 1D weights.
-
-The comment suggests that a separable NoData pass would "over-weight" pixels, but GDAL's implementation shows this is not the case. The horizontal mask correctly propagates partial validity through the vertical pass.
-
-**Current MLX behavior:** The 2D uniform weighting is simpler to implement but does not match GDAL's separable tent weighting at NoData boundaries. This was the root cause of the documented mismatch.
-
-**Fix implemented (2026-04-15):** Implemented true separable masked convolution for the NoData path to match GDAL exactly:
-1. Horizontal pass: reshape to [pH, targetW, 2], multiply data by weights (0.5), sum, divide by weight sum (conditional: if weightSum > 0, output = dataSum / weightSum; else output = 0). Track intermediate mask.
-2. Vertical pass: reshape intermediate to [targetH, 2, targetW], apply same masked weighted sum using intermediate mask.
-3. Output NoData where no valid pixels survived either pass.
-
-**Test results:** After fix, all COG stats tests pass for both AVERAGE and BILINEAR within 3% tolerance (tightened from 5% based on actual deviation measurements). The mean values are now very close (within 0.004 across all overview levels), with small remaining drift likely due to floating point precision differences between CPU and GPU execution order.
-
-**Deviation tabulation (after fix):**
+**Numeric-nodata COG stats** (`check_cog_statistics`, live reconfirmed 2026-07-17): gate **3%**. Max observed **2.48%** (BILINEAR ovr 3 mean).
 
 | Method    | Level      | min dev | max dev | mean dev | stddev dev |
 |-----------|------------|---------|---------|----------|------------|
@@ -277,4 +272,82 @@ The comment suggests that a separable NoData pass would "over-weight" pixels, bu
 | BILINEAR  | Overview 3 | 0.56%   | 0.02%   | 2.48%    | 0.07%      |
 | BILINEAR  | Overview 4 | 1.51%   | 0.18%   | 1.80%    | 0.41%      |
 
-**Maximum observed deviation: 2.48%** (BILINEAR Overview 3 mean). Test threshold set to 3% to provide headroom while ensuring correctness.
+## Removed check_float16_pipeline (2026-07-17)
+
+- Deleted `tests/check_float16_pipeline.cpp` and CMake/ctest registration
+- Reason: current phase is Float32-only (DSM/DTM/DEM/slope/etc.); a forced Float16 library probe is out of scope
+- Float16 remains covered only as a **rejected** dtype in `check_dtype_rejection`
+- Historical finding kept in learnings (Float16 nodata quantization of -9999 → -10000); not an active test
+
+## Current phase scope: Float32 only (2026-07-17)
+
+- Policy: Float32-only for this phase
+- In scope: DSM, DTM, DEM, slope, aspect, similar continuous analytic rasters
+- Out of scope: Byte orthos, UInt16 imagery, Float16, integer elevation, categorical maps, Byte hillshade deliverables
+- Non-Float32 must be rejected at CLI, not converted
+- Known Limitations corrected: previously said other dtypes were "converted on read"; actual behaviour is reject
+
+## Common raster data types by product (2026-07-17)
+
+
+Industry-typical dtypes for products users might feed into a COG pipeline:
+
+| Product | Most common dtype | Why |
+|---------|-------------------|-----|
+| Ortho / orthomosaic | **Byte (UInt8)** RGB/RGBA | Display imagery, 0–255 per band |
+| High-bit aerial/sat | **UInt16** | 12–14 bit sensors stored in 16-bit |
+| DSM / DTM / DEM | **Float32** | Continuous elevation, decimals, nodata |
+| Hillshade | **Byte** | Visualization product (0–255 gray) |
+| Slope | **Float32** | Degrees or percent, continuous |
+| Aspect | **Float32** | Degrees 0–360 |
+| Roughness / TPI / curvature | **Float32** | Continuous morphometrics |
+| Land cover / class maps | **Byte** or **UInt16** | Categories, not continuous |
+
+Implications for mlx-cog-gen:
+
+- **Float32-only is correct for the elevation/analytic target** (DSM, DTM, DEM, slope, aspect, related morphometrics)
+- **Orthos are usually Byte multichannel** and are a different workflow; not the primary fit for this tool
+- **Hillshade as a deliverable is often Byte**, even when derived from a Float32 DEM
+- CLI dtype rejection (Float32 only) matches DEM-centric use; accepting Byte orthos would need a separate product path, not silent conversion to Float32
+
+Related tests:
+
+- `check_dtype_rejection`: enforces Float32-only at the CLI (Float16 among rejected types)
+
+## Test naming and documentation standard (2026-07-17)
+
+- Each test file documents agenda, why it matters, and pass criteria in a header comment
+- Full English file names, e.g. `check_mlx_availability.cpp` not `test_mlx.cpp`
+- Renames applied (current suite):
+  - `test_mlx.cpp` → `check_mlx_availability.cpp`
+  - `test_overview_dims.cpp` → `check_overview_dimensions.cpp`
+  - `test_cog_stats.cpp` → `check_cog_statistics.cpp`
+  - `test_dtype_rejection.cpp` → `check_dtype_rejection.cpp`
+  - `test_nan_nodata.cpp` → `check_nan_nodata.cpp`
+- `test_float16.cpp` was renamed to `check_float16_pipeline.cpp` then **removed** (Float32-only phase; see above)
+- CMake targets and ctest names match the five active `check_*.cpp` stems
+- README test list updated to the full suite
+
+## check_overview_dimensions agenda fix (2026-07-17)
+
+
+- Previous test checked MLX overview sizes against a hardcoded `ceil(N/2)` formula only.
+- That does not state the real contract: for supported resampling methods (AVERAGE, BILINEAR), MLX overview dimensions must match GDAL's overview dimensions exactly.
+- Rewrite:
+  - Reference path: `BuildOverviews("AVERAGE"|"BILINEAR", factors)`
+  - MLX path: `BuildOverviews("NONE", factors)` then `MLXBuildOverviews(..., method)` (production allocate+fill)
+  - Cases: even/odd single-level, multi-level even/odd, `sample_dem.tif` size (4772x5125, 4 levels)
+  - Methods: both AVERAGE and BILINEAR
+  - Pass criteria: overview count equal; each level width/height equal (exact)
+- Documented in the test file header: not comparing COG `OVERVIEWS=AUTO` floor path (known 1px difference in docs/known-issues.md)
+- Resampling method does not change GDAL overview sizes, but both methods are still exercised so a method-specific regression cannot slip through
+
+## learnings.md stale-content cleanup (2026-07-17)
+
+
+- Replaced obsolete NaN BILINEAR deviation table (claimed mean up to 16.81%) with live 2026-07-17 numbers (worst ~2.9%); documented 15% → 5% gate tighten
+- Rewrote bilinear NoData section: current path is separable masked convolution; 2D box path is historical only
+- Corrected batched-eval note: production still per-level `mx::eval`
+- Corrected read/write buffer description: MLX allocator on read; vector copy mainly for NaN restore on write
+- MLX version note 0.32.0; GDAL citations use tree paths only (e.g. `gcore/overview.cpp`); float16 rename marked removed
+

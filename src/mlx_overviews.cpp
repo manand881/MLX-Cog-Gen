@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -234,15 +235,10 @@ CPLErr MLXBuildOverviews(GDALDataset *poDS, int nBands,
         double nodataDouble = poBand->GetNoDataValue(&hasNodata);
         float nodataVal = static_cast<float>(nodataDouble);
 
-        // Reject NaN no-data values: mx::equal() cannot detect NaN (NaN != NaN by IEEE 754)
-        // and NaN pixels would propagate through averaging, corrupting all overviews
-        if (hasNodata && std::isnan(nodataVal))
-        {
-            CPLError(CE_Failure, CPLE_AppDefined,
-                     "MLXBuildOverviews: NaN no-data values are not supported. "
-                     "Convert the dataset to use a numeric no-data value (e.g., -9999) before processing.");
-            return CE_Failure;
-        }
+        // Detect NaN no-data values: mx::equal() cannot detect NaN (NaN != NaN by IEEE 754)
+        // We substitute NaN with -9999 internally for MLX operations, then restore NaN before writing
+        bool nodataIsNaN = hasNodata && std::isnan(nodataVal);
+        float workingNodataVal = nodataIsNaN ? -9999.0f : nodataVal;
 
         auto tRead = Clock::now();
         size_t nbytes = static_cast<size_t>(W) * H * sizeof(float);
@@ -259,6 +255,20 @@ CPLErr MLXBuildOverviews(GDALDataset *poDS, int nBands,
                      panBandList[iBand]);
             mx::allocator::free(buffer);
             return eErr;
+        }
+
+        // Substitute NaN with working nodata value if original nodata is NaN
+        // Done on CPU before creating MLX array since mx::isnan() may not be available
+        if (nodataIsNaN)
+        {
+            size_t pixelCount = static_cast<size_t>(W) * H;
+            for (size_t i = 0; i < pixelCount; i++)
+            {
+                if (std::isnan(rawPtr[i]))
+                {
+                    rawPtr[i] = workingNodataVal;
+                }
+            }
         }
 
         auto tArrayCopy = Clock::now();
@@ -282,16 +292,33 @@ CPLErr MLXBuildOverviews(GDALDataset *poDS, int nBands,
             auto tGpu = Clock::now();
             mx::array downsampled =
                 (method == ResampleMethod::BILINEAR)
-                    ? mlx_downsample_bilinear(current, oH, oW, nodataVal, hasNodata)
-                    : mlx_downsample_average(current, oH, oW, nodataVal, hasNodata);
+                    ? mlx_downsample_bilinear(current, oH, oW, workingNodataVal, hasNodata)
+                    : mlx_downsample_average(current, oH, oW, workingNodataVal, hasNodata);
             mx::eval(downsampled);
             msGpuLevel = elapsed_ms(tGpu);
 
             // Write result directly from MLX unified memory into the overview
             // band. No intermediate copy is needed since eval() has completed.
             auto tIo = Clock::now();
+            
+            // Restore NaN before writing if original nodata was NaN
+            // Done on CPU by modifying the MLX array data in-place
+            const float *mlxDPtr = downsampled.data<float>();
+            std::vector<float> outputBuffer(mlxDPtr, mlxDPtr + static_cast<size_t>(oW) * oH);
+            if (nodataIsNaN)
+            {
+                size_t pixelCount = static_cast<size_t>(oW) * oH;
+                for (size_t i = 0; i < pixelCount; i++)
+                {
+                    if (outputBuffer[i] == workingNodataVal)
+                    {
+                        outputBuffer[i] = std::numeric_limits<float>::quiet_NaN();
+                    }
+                }
+            }
+            
             eErr = poOvr->RasterIO(GF_Write, 0, 0, oW, oH,
-                                   const_cast<float *>(downsampled.data<float>()),
+                                   outputBuffer.data(),
                                    oW, oH, GDT_Float32, 0, 0);
             msIoLevel = elapsed_ms(tIo);
 
@@ -311,6 +338,12 @@ CPLErr MLXBuildOverviews(GDALDataset *poDS, int nBands,
                     iOvr + 1, oW, oH, msGpuLevel, msIoLevel);
 
             current = downsampled;
+        }
+
+        // Restore NaN nodata value in output band metadata if original was NaN
+        if (nodataIsNaN)
+        {
+            poBand->SetNoDataValue(std::numeric_limits<float>::quiet_NaN());
         }
 
         fprintf(stderr, "  Band %d: %d overview level(s) computed on GPU (%s)  "
