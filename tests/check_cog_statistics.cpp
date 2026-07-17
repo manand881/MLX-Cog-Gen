@@ -1,3 +1,23 @@
+// Check COG statistics
+//
+// Agenda
+// ------
+// Build COGs with GDAL and with the MLX pipeline on a real Float32 DEM that
+// uses a numeric nodata value. Compare structure and raster stats for both
+// supported resampling methods (AVERAGE, BILINEAR).
+//
+// Why it matters
+// --------------
+// This is the main correctness gate for continuous DEM overviews. Pixel-perfect
+// equality is not required (CPU vs GPU float order, odd-size edges), but stats
+// and structure must stay close enough that MLX is a safe substitute for GDAL.
+//
+// Pass criteria
+// -------------
+// Overview count matches exactly. File size within 3%. min/max/mean/stddev at
+// full resolution and every overview level within 3% of GDAL for AVERAGE and
+// BILINEAR.
+
 #include <cassert>
 #include <cinttypes>
 #include <cmath>
@@ -12,8 +32,8 @@
 #include "../src/mlx_overviews.h"
 
 static const char *INPUT = "tests/sample_dem.tif";
-static const char *GDAL_OUT = "/vsimem/test_stats_gdal.tif";
-static const char *MLX_OUT  = "/vsimem/test_stats_mlx.tif";
+static const char *GDAL_OUT = "/vsimem/check_stats_gdal.tif";
+static const char *MLX_OUT  = "/vsimem/check_stats_mlx.tif";
 static const float TOLERANCE = 0.03f; // 3% (max observed deviation: 2.48%)
 
 struct Stats
@@ -173,7 +193,7 @@ static GDALDataset *buildMLXCOG(GDALDataset *poSrcDS, const char *outPath,
     int srcH   = poSrcDS->GetRasterYSize();
 
     // Create temp in-memory GTiff copy
-    const char *tmpPath = "/vsimem/test_stats_mlx_tmp.tif";
+    const char *tmpPath = "/vsimem/check_stats_mlx_tmp.tif";
     GDALDriver *poTiffDriver =
         GetGDALDriverManager()->GetDriverByName("GTiff");
     GDALDataset *poTmpDS = poTiffDriver->CreateCopy(
@@ -263,7 +283,7 @@ int main()
 {
     GDALAllRegister();
 
-    printf("=== COG Stats Comparison Test (tolerance: %.0f%%) ===\n\n",
+    printf("=== Check COG statistics (tolerance: %.0f%%) ===\n\n",
            TOLERANCE * 100);
 
     GDALDataset *poSrcDS = static_cast<GDALDataset *>(
@@ -308,6 +328,6 @@ int main()
 
     GDALClose(poSrcDS);
 
-    printf("\n=== All stats tests passed ===\n");
+    printf("\n=== All COG statistics checks passed ===\n");
     return 0;
 }

@@ -7,55 +7,67 @@ MLX-accelerated Cloud Optimized GeoTIFF generator for Apple Silicon.
 
 ## About
 
-mlx-cog-gen replaces GDAL's CPU-based pyramid/overview generation with an MLX implementation that runs on the Apple Silicon GPU. Everything else in the COG pipeline (tiling, compression, metadata) is handled by GDAL as usual.
-
-**GDAL is a required system dependency.** This project links against the installed GDAL library and does not bundle it.
+- Replaces GDAL's CPU-based pyramid/overview generation with an MLX GPU implementation on Apple Silicon
+- Everything else in the COG pipeline (tiling, compression, metadata) stays with GDAL
+- **GDAL is a required system dependency** (links against the installed library; not bundled)
 
 ## Why Apple Silicon
 
-On an x86 machine, GDAL's overview generation may or may not be leaving performance on the table depending on whether a discrete GPU is present. The behaviour varies by hardware configuration: some machines have it, some don't, and GDAL never uses it regardless.
-
-On Apple Silicon the situation is deterministic. Every M-series device, from the base M1 MacBook Air to the M4 Mac Pro, ships with a high-performance GPU and Neural Engine in the same package as the CPU, sharing the same memory pool. GDAL uses none of it. The GPU is completely idle during the entire overview generation step on every Apple Silicon machine.
-
-Apple Silicon has become the dominant platform for professional macOS users including a large portion of the geospatial community. Optimising this workflow for Apple Silicon means every one of those machines benefits, not a subset with a particular hardware configuration, but all of them unconditionally.
+- On x86, GPU availability varies; GDAL never uses a GPU for overviews either way
+- Every M-series Mac has a high-performance GPU in the same package as the CPU (shared memory)
+- GDAL leaves that GPU idle for the entire overview step
+- Optimising for Apple Silicon benefits all M-series machines, not a subset with discrete GPUs
 
 ## Resampling methods
 
-GDAL's default overview resampling is **NEAREST**, which picks one pixel from each 2×2 block and discards the rest. For continuous data (elevation, imagery, temperature), this throws away 75% of the signal at each level. A ridge that is one pixel wide at full resolution can disappear entirely at the next overview level depending on which pixel was selected.
+GDAL's default overview resampling is **NEAREST**:
+
+- Picks one pixel from each 2×2 block and discards the rest
+- Throws away 75% of the signal per level on continuous data
+- Narrow features (e.g. a one-pixel ridge) can vanish at coarser levels
 
 `mlx_translate` supports two methods that avoid this.
 
 ### AVERAGE (default)
 
-Every pixel in a 2×2 block contributes equally to the output:
+- Every pixel in a 2×2 block contributes equally:
 
 ```
 out[i,j] = (src[2i,2j] + src[2i,2j+1] + src[2i+1,2j] + src[2i+1,2j+1]) / count_valid
 ```
 
-This is a box filter, the simplest averaging kernel. It preserves signal energy across zoom levels and is the most widely used method in geospatial workflows for continuous rasters. The equal-weight 2×2 sum maps directly onto GPU array operations with no approximation.
+- Box filter; preserves signal energy across zoom levels
+- Standard choice for continuous rasters in geospatial workflows
+- Maps directly onto GPU array ops with no approximation
 
 ### BILINEAR
 
-Rather than averaging a fixed block, bilinear treats each output pixel as a point sample. The sample position for output pixel `i` in source space is:
+- Treats each output pixel as a point sample, not a fixed block average
+- Sample position for output pixel `i` in source space:
 
 ```
 x = (i + 0.5) * 2 - 0.5 = 2i + 0.5
 ```
 
-This lands halfway between source pixels `2i` and `2i+1`. A tent filter (`w = 1 - |distance|`) then assigns weight 0.5 to each neighbour. Applied as two independent 1D passes (horizontal then vertical), the result for interior pixels at 2× is numerically the same as AVERAGE, but the model is different: interpolation at a point rather than integration over a region. The separable structure matches how GDAL implements bilinear and is the standard formulation used in image processing and GIS literature.
-
-Bilinear is the most commonly requested alternative to AVERAGE in geospatial workflows. At higher-order methods (cubic, lanczos) the kernels grow larger and negative weights appear, making them less suitable as defaults but more accurate for certain data types.
+- Lands halfway between source pixels `2i` and `2i+1`
+- Tent filter (`w = 1 - |distance|`) assigns weight 0.5 to each neighbour
+- Two 1D passes (horizontal, then vertical); matches GDAL's separable bilinear
+- At 2× interior pixels, numerically the same as AVERAGE; model differs (interpolation vs integration)
+- Most common alternative to AVERAGE; cubic/lanczos are higher-order and not defaults
 
 ## Limitations
 
-**Float32 only.** `mlx_translate` reads all raster bands as Float32 and processes them as Float32 on the GPU. Other data types (Byte, UInt16, Int16, Float64) are accepted as input; GDAL converts them to Float32 on read. The implementation has only been tested with Float32 rasters. Precision loss is possible for integer types that exceed Float32's 23-bit mantissa (Int32, UInt32, Float64). Use `gdal_translate` for those data types.
-
-**Memory.** `mlx_translate` loads each raster band fully into unified memory before dispatching to the GPU. This means **the uncompressed raster must fit within available system memory**. On Apple Silicon, CPU and GPU share the same memory pool, so available memory is whatever is free at runtime across both.
-
-To estimate uncompressed size: `width × height × bands × bytes_per_pixel`. For a Float32 single-band raster that is 30000×30000, this is 30000 × 30000 × 1 × 4 = ~3.4 GB. For a uint16 RGB raster of the same dimensions it would be 30000 × 30000 × 3 × 2 = ~5.1 GB.
-
-GDAL's approach processes in horizontal strips and handles arbitrarily large rasters. If your input exceeds available memory, use `gdal_translate` instead.
+- **Float32 only**
+  - Input bands must be Float32; other dtypes are rejected at the CLI
+  - In scope: continuous elevation/analytic products (DSM, DTM, DEM, slope, aspect, similar)
+  - Out of scope: Byte orthos, UInt16 imagery, Float16, integer elevation encodings, categorical maps
+  - Use `gdal_translate` for non-Float32
+- **Memory**
+  - Each band is loaded fully into unified memory before GPU dispatch
+  - Uncompressed raster must fit in available system memory
+  - Size estimate: `width × height × bands × bytes_per_pixel`
+  - Example: Float32 single-band 30000×30000 ≈ 3.4 GB
+  - GDAL strips large rasters; if input will not fit, use `gdal_translate`
 
 ## Build
 
@@ -74,30 +86,30 @@ make
 ctest --output-on-failure
 ```
 
-Three test suites run via `ctest`:
-
-- `test_mlx`: verifies MLX install, GPU device access, and basic array ops
-- `test_overview_dims`: verifies overview dimensions match GDAL's `ceil(N/2)` convention across even/odd/multi-level inputs
-- `test_cog_stats`: runs both GDAL and MLX COG generation on a real DEM and checks that overview count matches exactly, file sizes are within 5%, and raster stats (min, max, mean, stddev) are within 5% at every overview level
-
 ## Usage
 
 ```bash
 build/mlx_translate input.tif output_cog.tif
 ```
 
-Outputs a COG with LZW compression and AVERAGE resampling by default. Pass `-r` to select a resampling method and `-co KEY=VALUE` to override creation options:
+- Default: COG with LZW compression and AVERAGE resampling
+- `-r` selects resampling; `-co KEY=VALUE` overrides creation options
 
 ```bash
 build/mlx_translate input.tif output_cog.tif -r BILINEAR
 build/mlx_translate input.tif output_cog.tif -r AVERAGE -co COMPRESS=DEFLATE
 ```
 
-Supported resampling methods: `AVERAGE` (default), `BILINEAR`.
+- Supported resampling: `AVERAGE` (default), `BILINEAR`
 
 ## Benchmarks
 
-Tested on an M1 Pro (16 GB), 5 runs per method. Rasters are Float32 single-band DEMs generated via TIN interpolation at six GSDs. GDAL 1T is the default single-threaded invocation; GDAL nT uses `ALL_CPUS` (10 cores). MLX pipeline uses parallel LZW tile compression (`GDAL_NUM_THREADS=ALL_CPUS`) for the final COG write.
+- Hardware: M1 Pro (16 GB)
+- 5 runs per method
+- Float32 single-band DEMs via TIN interpolation at six GSDs
+- GDAL 1T: single-threaded default
+- GDAL nT: `ALL_CPUS` (10 cores)
+- MLX: parallel LZW tile compression (`GDAL_NUM_THREADS=ALL_CPUS`) on final COG write
 
 **AVERAGE**
 
@@ -121,26 +133,30 @@ Tested on an M1 Pro (16 GB), 5 runs per method. Rasters are Float32 single-band 
 | dem_10cm | 29967×29074 | 323 MB | 32.968s‡ | 9.815s | 4.979s | 6.62× faster | 1.97× faster |
 | dem_5cm | 59927×58141 | 928 MB | 126.848s | 36.882s‡ | 13.055s | 9.72× faster | 2.83× faster |
 
-† 1 of 5 runs excluded (144.8s outlier); average computed from 4 valid runs.
-
-‡ dem_10cm GDAL 1T: 1 of 5 runs excluded (293.9s outlier), average from 4 valid runs. dem_5cm GDAL nT: 1 of 5 runs excluded (57.4s outlier), average from 4 valid runs.
+- † 1 of 5 runs excluded (144.8s outlier); average from 4 valid runs
+- ‡ dem_10cm GDAL 1T: 1 of 5 runs excluded (293.9s outlier). dem_5cm GDAL nT: 1 of 5 runs excluded (57.4s outlier)
 
 | AVERAGE | BILINEAR |
 |---|---|
 | ![AVERAGE performance](docs/performance_average_log.png) | ![BILINEAR performance](docs/performance_bilinear_log.png) |
 
-MLX beats GDAL nT starting at dem_20cm (128 MB) and wins by **2.73×** (AVERAGE) and **2.83×** (BILINEAR) at dem_5cm (~60k×58k pixels). MLX is slower than GDAL nT at raster sizes below ~128 MB where Metal kernel launch overhead dominates over GPU compute time. MLX average and MLX bilinear run in nearly identical time since the GPU parallelises both uniformly.
+- MLX beats GDAL nT from dem_20cm (128 MB) upward
+- At dem_5cm (~60k×58k): **2.73×** (AVERAGE), **2.83×** (BILINEAR) vs GDAL nT
+- Below ~128 MB, Metal launch overhead can make MLX slower than GDAL nT
+- MLX AVERAGE and BILINEAR wall times are nearly identical (GPU parallelises both uniformly)
 
 ## Roadmap
 
 - Additional resampling algorithms (cubic, lanczos)
-- GPU-accelerated statistics computation (min, max, mean, stddev) across all overview levels
-- GPU-accelerated tile block creation (512×512 blocking, currently delegated to GDAL)
+- GPU-accelerated statistics (min, max, mean, stddev) across overview levels
+- GPU-accelerated tile block creation (512×512; currently delegated to GDAL)
 - OOM detection and graceful fallback to GDAL
 
 ## Contributing
 
-Open an issue before raising a PR. Describe what you want to do and why in as much detail as possible. Once there is agreement on the approach, go ahead and open the PR.
+- Open an issue before raising a PR
+- Describe what you want to do and why
+- Open the PR once the approach is agreed
 
 ## License
 

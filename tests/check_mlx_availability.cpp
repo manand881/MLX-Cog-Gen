@@ -1,3 +1,20 @@
+// Check MLX availability
+//
+// Agenda
+// ------
+// Confirm MLX is installed, the Metal GPU device is usable, basic GPU array
+// ops work, and a 2x2 box-filter downsample runs on GPU.
+//
+// Why it matters
+// --------------
+// Every other test and the production path depend on MLX + GPU. If this fails,
+// the machine or dependency setup is broken; do not chase overview bugs first.
+//
+// Pass criteria
+// -------------
+// Version prints; GPU device type is gpu; ones+ones yields 2; 4x4 mean-pool
+// to 2x2 succeeds without crash or assert.
+
 #include <cassert>
 #include <iostream>
 #include <mlx/mlx.h>
@@ -67,11 +84,11 @@ void test_downsample()
 
 int main()
 {
-    std::cout << "=== MLX Installation Tests ===\n";
+    std::cout << "=== Check MLX availability ===\n";
     test_version();
     test_gpu_available();
     test_gpu_array_op();
     test_downsample();
-    std::cout << "=== All tests passed ===\n";
+    std::cout << "=== All MLX availability checks passed ===\n";
     return 0;
 }
